@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BLACKOUT NET monitor</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,.10);
+  --series: #2a78d6; --good: #0ca30c; --warn: #fab219; --crit: #d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10); --series: #3987e5;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+h1 { font-size: 20px; margin: 0; letter-spacing: .04em; }
+h1 span { color: var(--ink2); font-weight: 400; letter-spacing: 0; }
+h2 { font-size: 14px; margin: 0 0 10px; color: var(--ink2); font-weight: 600; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
+.spacer { flex: 1; }
+button { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 8px; padding: 6px 12px; cursor: pointer; min-height: 36px; }
+button:hover { border-color: var(--ink2); }
+button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+:focus-visible { outline: 2px solid var(--series); outline-offset: 2px; }
+.good { color: var(--good); } .warn { color: var(--warn); } .crit { color: var(--crit); } .muted { color: var(--muted); }
+#alert { display: none; margin-bottom: 16px; padding: 12px 16px; border-radius: 10px; border: 2px solid var(--crit); background: color-mix(in srgb, var(--crit) 12%, var(--surface)); font-weight: 600; }
+#alert.show { display: block; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tile .label { color: var(--ink2); font-size: 13px; }
+.tile .value { font-size: 28px; font-weight: 600; line-height: 1.2; }
+.tile .sub { color: var(--ink2); font-size: 13px; min-height: 1.45em; }
+.layout { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start; }
+@media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+.left { display: grid; gap: 16px; }
+#map { width: 100%; height: auto; display: block; }
+#map text { fill: var(--ink); font-size: 13px; text-anchor: middle; }
+#map .small { fill: var(--ink2); font-size: 12px; paint-order: stroke; stroke: var(--surface); stroke-width: 4px; }
+#map .letter { font-size: 20px; font-weight: 700; }
+.pulse { fill: var(--series); stroke: var(--surface); stroke-width: 2; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.node-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.node-head strong { font-size: 18px; }
+.meter { height: 8px; border-radius: 999px; overflow: hidden; margin: 6px 0 2px; }
+.meter div { height: 100%; border-radius: 999px; transition: width .9s linear; }
+.facts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin: 12px 0; }
+.facts dt { color: var(--ink2); font-size: 12px; }
+.facts dd { margin: 0; font-weight: 600; }
+.facts dd small { font-weight: 400; color: var(--ink2); }
+.spark { width: 100%; height: auto; display: block; }
+.spark text { fill: var(--ink); font-size: 12px; }
+.caption { color: var(--ink2); font-size: 12px; }
+.logbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+#log { list-style: none; margin: 0; padding: 0; max-height: 640px; overflow: auto; }
+#log li { display: grid; grid-template-columns: 62px 18px 1fr; gap: 6px; padding: 5px 0; border-bottom: 1px solid var(--grid); font-size: 13px; }
+#log time { color: var(--ink2); font-variant-numeric: tabular-nums; }
+#log .problem { font-weight: 600; }
+footer { color: var(--ink2); font-size: 12px; margin-top: 16px; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .meter div { transition: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>BLACKOUT NET <span>node monitor</span></h1>
+    <span class="pill" id="link"><span class="muted">?</span> Connecting</span>
+    <span class="spacer"></span>
+    <button id="sound" aria-pressed="false">Sound alerts: off</button>
+  </header>
+
+  <div id="alert" role="alert"></div>
+
+  <section class="tiles" aria-label="Summary">
+    <div class="card tile"><div class="label">Nodes online</div><div class="value" id="t-online">–</div><div class="sub" id="t-online-sub"></div></div>
+    <div class="card tile"><div class="label">Heartbeats received</div><div class="value" id="t-got">–</div><div class="sub" id="t-got-sub"></div></div>
+    <div class="card tile"><div class="label">Heartbeats lost</div><div class="value" id="t-lost">–</div><div class="sub" id="t-lost-sub"></div></div>
+    <div class="card tile"><div class="label">Devices on node Wi-Fi</div><div class="value" id="t-wifi">–</div><div class="sub">phones and laptops, this one included</div></div>
+    <div class="card tile"><div class="label">Connected node uptime</div><div class="value" id="t-up">–</div><div class="sub" id="t-up-sub"></div></div>
+  </section>
+
+  <div class="layout">
+    <div class="left">
+      <section class="card">
+        <h2>Network map</h2>
+        <svg id="map" viewBox="0 0 600 220" role="img" aria-label="Network map">
+          <g id="map-body"></g><g id="pulses"></g>
+        </svg>
+        <div class="caption" id="map-cap"></div>
+      </section>
+      <section class="cards" id="cards" aria-label="Nodes"></section>
+    </div>
+
+    <section class="card">
+      <h2>Event log</h2>
+      <div class="logbar">
+        <button id="f-all" aria-pressed="true">All</button>
+        <button id="f-prob" aria-pressed="false">Problems only</button>
+        <button id="pause" aria-pressed="false">Pause</button>
+      </div>
+      <ul id="log"></ul>
+    </section>
+  </div>
+
+  <footer id="foot"></footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const el = (tag, props, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+const svg = (tag, attrs, text) => {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text != null) e.textContent = text;
+  return e;
+};
+const STATUS = {
+  ONLINE: { icon: "●", label: "Online", cls: "good", color: "var(--good)" },
+  OFFLINE: { icon: "✕", label: "OFFLINE", cls: "crit", color: "var(--crit)" },
+  UNKNOWN: { icon: "?", label: "Unknown", cls: "muted", color: "var(--muted)" },
+};
+const KIND = { hb: ["•", "muted"], lost: ["!", "warn"], offline: ["✕", "crit"], online: ["✓", "good"], restart: ["↻", "warn"], link: ["⇄", "crit"], new: ["+", "good"] };
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function dur(s) {
+  s = Math.max(0, Math.round(s));
+  if (s < 60) return s + " s";
+  if (s < 3600) return Math.floor(s / 60) + " m " + String(s % 60).padStart(2, "0") + " s";
+  return Math.floor(s / 3600) + " h " + String(Math.floor(s % 3600 / 60)).padStart(2, "0") + " m";
+}
+// Rough guide only: SF9 LoRa still decodes far below these figures.
+const signalWord = rssi => rssi >= -90 ? "Strong" : rssi >= -110 ? "Fair" : "Weak";
+const statusChip = st => { const s = STATUS[st]; return [el("span", { className: s.cls }, s.icon), " " + s.label]; };
+
+/* ---------- network map ---------- */
+const hasGps = p => p && p.lat != null && p.lon != null;
+function distM(a, b) {  // great-circle distance in metres between two {lat, lon} points
+  const rad = Math.PI / 180, dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.sqrt(h));
+}
+console.assert(Math.abs(distM({ lat: 28.75, lon: 77.116 }, { lat: 28.75, lon: 77.118 }) - 195) < 1, "distM self-check failed");
+const fmtDist = m => m < 1000 ? Math.round(m) + " m" : (m / 1000).toFixed(2) + " km";
+
+function layout(st) {
+  const me = st.self.name ?? "?", others = st.nodes.filter(n => n.name !== me), pos = new Map();
+  const names = new Set(others.map(n => n.name));
+  const parent = n => n.via !== n.name && n.via !== me && names.has(n.via) ? n.via : me;
+  const geo = new Map([[me, st.self], ...others.map(n => [n.name, n])]);
+  if (others.length && [...geo.values()].every(hasGps)) {
+    // Flat projection around the connected node: right for a campus, not for nodes many kilometres apart.
+    // shortcut: nodes much closer together than the whole map's span overlap, add zoom if that happens.
+    const perDeg = 111195, k = Math.cos(st.self.lat * Math.PI / 180);
+    const pts = [...geo].map(([name, p]) => ({ name, x: (p.lon - st.self.lon) * k * perDeg, y: (st.self.lat - p.lat) * perDeg }));
+    const xs = pts.map(p => p.x), ys = pts.map(p => p.y), x0 = Math.min(...xs), y0 = Math.min(...ys);
+    const w = Math.max(...xs) - x0, h = Math.max(...ys) - y0;
+    if (Math.max(w, h) >= 1) {  // every node in the same spot cannot be drawn to scale
+      const W = 600, H = 340, padX = 70, top = 40, bottom = 100;
+      const scale = Math.min((W - 2 * padX) / (w || 1), (H - top - bottom) / (h || 1));  // pixels per metre
+      const ox = (W - w * scale) / 2, oy = top + (H - top - bottom - h * scale) / 2;
+      for (const p of pts) pos.set(p.name, { x: ox + (p.x - x0) * scale, y: oy + (p.y - y0) * scale });
+      return { me, pos, parent, geo, height: H, scale };
+    }
+  }
+  const cols = [[], []];
+  for (const n of others) cols[parent(n) === me ? 0 : 1].push(n);
+  const height = 120 * Math.max(1, cols[0].length, cols[1].length);  // one 120-unit row per stacked node
+  pos.set(me, { x: 90, y: height / 2 - 15 });
+  cols.forEach((col, i) => col.forEach((n, j) => pos.set(n.name, { x: 300 + i * 210, y: height * (j + .5) / col.length - 15 })));
+  return { me, pos, parent, geo, height, scale: 0 };
+}
+function drawNode(g, p, name, status, line2) {
+  const s = STATUS[status];
+  g.append(svg("circle", { cx: p.x, cy: p.y, r: 26, fill: "var(--surface)", stroke: s.color, "stroke-width": 3,
+                           "stroke-dasharray": status === "ONLINE" ? "" : "6 4" }),
+           svg("text", { x: p.x, y: p.y + 7, class: "letter" }, name.slice(0, 2)));
+  const t = svg("text", { x: p.x, y: p.y + 46 });
+  t.append(svg("tspan", { fill: s.color }, s.icon), svg("tspan", {}, " " + s.label));
+  g.append(t, svg("text", { x: p.x, y: p.y + 62, class: "small" }, line2));
+}
+function drawMap(st) {
+  const g = $("map-body"), { me, pos, parent, geo, height, scale } = layout(st);
+  g.replaceChildren();
+  $("map").setAttribute("viewBox", "0 0 600 " + height);
+  // Nodes first: link labels drawn after them stay readable where a link crosses a node's caption.
+  drawNode(g, pos.get(me), me, st.link ? "ONLINE" : "UNKNOWN", st.link ? "this laptop's Wi-Fi" : "no link");
+  for (const n of st.nodes) if (pos.has(n.name) && n.name !== me)
+    drawNode(g, pos.get(n.name), n.name, n.status, "heard " + dur(n.age_ms / 1000) + " ago");
+  for (const n of st.nodes) {
+    const a = pos.get(parent(n)), b = pos.get(n.name);
+    if (!b) continue;
+    const down = n.status !== "ONLINE", from = geo.get(parent(n));
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1, ux = (b.x - a.x) / len * 28, uy = (b.y - a.y) / len * 28;
+    g.append(svg("line", { x1: a.x + ux, y1: a.y + uy, x2: b.x - ux, y2: b.y - uy, "stroke-width": 2,
+                           stroke: n.status === "OFFLINE" ? "var(--crit)" : "var(--axis)", "stroke-dasharray": down ? "6 5" : "" }),
+             svg("text", { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 - 8, class: "small" },
+                 (hasGps(from) && hasGps(n) ? fmtDist(distM(from, n)) + " · " : "") +
+                 (parent(n) === me ? n.rssi + " dBm" : "relayed by " + n.via)));
+  }
+  if (scale) {  // scale bar of a round length near 110 px
+    const raw = 110 / scale, p10 = 10 ** Math.floor(Math.log10(raw)), bar = [5, 2, 1].find(m => m * p10 <= raw) * p10;
+    g.append(svg("line", { x1: 16, x2: 16 + bar * scale, y1: height - 12, y2: height - 12, stroke: "var(--ink2)", "stroke-width": 2 }),
+             svg("text", { x: 16 + bar * scale / 2, y: height - 20, class: "small" }, fmtDist(bar)));
+  }
+  const noGps = [...geo].filter(([, p]) => !hasGps(p)).map(([name]) => name);
+  $("map-cap").textContent = (scale ? "Drawn to scale from each node's GPS position, north at the top. " :
+      noGps.length ? "Not to scale: no GPS position from " + noGps.join(", ") + ". " : "") +
+    "A dot travels along the route each time a heartbeat arrives. Signal figures are for the last hop only.";
+  $("map").setAttribute("aria-label", "Network map. " + st.nodes.map(n => `${n.name} ${STATUS[n.status].label}`).join(", "));
+}
+function pulse(st, name) {
+  if (reducedMotion) return;
+  const { me, pos, parent } = layout(st), node = st.nodes.find(n => n.name === name);
+  if (!node || !pos.has(name)) return;
+  const pts = [pos.get(name)], via = parent(node);
+  if (via !== me) pts.push(pos.get(via));
+  pts.push(pos.get(me));
+  const dot = svg("circle", { r: 6, class: "pulse" });
+  $("pulses").append(dot);
+  dot.animate(pts.map(p => ({ transform: `translate(${p.x}px, ${p.y}px)` })), { duration: 500 * (pts.length - 1) })
+     .onfinish = () => dot.remove();
+}
+
+/* ---------- node cards ---------- */
+const cards = new Map();
+function makeCard(n) {
+  const root = el("article", { className: "card" });
+  const f = {};
+  const fact = (key, label) => { f[key] = el("dd", {}); return el("div", {}, el("dt", {}, label), f[key]); };
+  f.status = el("span", { className: "pill" });
+  f.meterTrack = el("div", { className: "meter" }, f.meter = el("div", {}));
+  f.age = el("div", { className: "caption" });
+  f.spark = svg("svg", { class: "spark", viewBox: "0 0 320 84", role: "img" });
+  f.sparkCap = el("div", { className: "caption" });
+  root.append(
+    el("div", { className: "node-head" }, el("strong", {}, "Node " + n.name), f.status),
+    f.meterTrack, f.age,
+    el("dl", { className: "facts" }, fact("rssi", "Signal (RSSI)"), fact("snr", "Signal to noise (SNR)"),
+       fact("route", "Route"), fact("pct", "Heartbeats received"), fact("seq", "Latest heartbeat"), fact("up", "Node uptime"),
+       fact("dist", "Distance from connected node")),
+    f.spark, f.sparkCap);
+  $("cards").append(root);
+  return { f, drawn: "" };
+}
+function updateCard(n, st) {
+  if (!cards.has(n.id)) cards.set(n.id, makeCard(n));
+  const c = cards.get(n.id), f = c.f, age = n.age_ms / 1000, interval = st.hb_interval_s;
+  f.dist.textContent = hasGps(st.self) && hasGps(n) ? fmtDist(distM(st.self, n)) : "No GPS position";
+  f.status.replaceChildren(...statusChip(n.status));
+  const color = n.status === "UNKNOWN" ? "var(--muted)" : age <= interval ? "var(--good)" : age <= 3 * interval ? "var(--warn)" : "var(--crit)";
+  f.meter.style.width = Math.min(100, 100 * age / (3 * interval)) + "%";
+  f.meter.style.background = color;
+  f.meterTrack.style.background = `color-mix(in srgb, ${color} 22%, var(--surface))`;
+  f.age.textContent = "Last heard " + dur(age) + " ago. " + (
+    n.status === "UNKNOWN" ? "No link to the node, so this may be out of date." :
+    age <= interval ? "Next heartbeat expected in " + dur(interval - age) + "." :
+    age <= 3 * interval ? "Overdue by " + dur(age - interval) + "." : "Marked offline after " + dur(3 * interval) + " of silence.");
+  f.rssi.replaceChildren(n.rssi + " dBm ", el("small", {}, signalWord(n.rssi)));
+  f.snr.textContent = n.snr + " dB";
+  f.route.textContent = n.via === n.name ? "Direct" : "Relayed by " + n.via;
+  f.pct.replaceChildren(n.received_pct + " % ", el("small", {}, `${n.received} got, ${n.lost} lost`));
+  f.seq.textContent = "#" + n.seq;
+  f.up.textContent = dur(n.uptime_s);
+  const key = n.seq + ":" + n.rssi_hist.length;
+  if (c.drawn !== key) { c.drawn = key; drawSpark(f.spark, f.sparkCap, n); }
+}
+function drawSpark(root, cap, n) {
+  const h = n.rssi_hist, X0 = 6, X1 = 262, Y0 = 12, Y1 = 72;
+  let lo = Math.min(...h), hi = Math.max(...h);
+  if (hi - lo < 6) { const mid = (hi + lo) / 2; lo = mid - 3; hi = mid + 3; }
+  const x = i => h.length < 2 ? X1 : X0 + (X1 - X0) * i / (h.length - 1);
+  const y = v => Y1 - (Y1 - Y0) * (v - lo) / (hi - lo);
+  const last = h.length - 1;
+  const cross = svg("line", { y1: Y0 - 6, y2: Y1 + 6, stroke: "var(--axis)", "stroke-width": 1, visibility: "hidden" });
+  const hoverDot = svg("circle", { r: 4, fill: "var(--series)", stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" });
+  const tip = svg("text", { y: 10, visibility: "hidden" });
+  root.replaceChildren(
+    svg("line", { x1: X0, x2: X1, y1: Y1 + 6, y2: Y1 + 6, stroke: "var(--grid)", "stroke-width": 1 }),
+    svg("polyline", { points: h.map((v, i) => x(i) + "," + y(v)).join(" "), fill: "none", stroke: "var(--series)",
+                      "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }),
+    cross,
+    svg("circle", { cx: x(last), cy: y(h[last]), r: 4, fill: "var(--series)", stroke: "var(--surface)", "stroke-width": 2 }),
+    svg("text", { x: X1 + 10, y: y(h[last]) + 4 }, h[last]),
+    hoverDot, tip);
+  root.setAttribute("aria-label", `Signal strength of node ${n.name} over its last ${h.length} heartbeats, latest ${h[last]} dBm`);
+  cap.textContent = `Signal strength (dBm), last ${h.length} heartbeat${h.length === 1 ? "" : "s"}. Lowest ${Math.min(...h)}, highest ${Math.max(...h)}.`;
+  root.onmousemove = e => {
+    const box = root.getBoundingClientRect(), px = (e.clientX - box.left) * 320 / box.width;
+    const i = Math.max(0, Math.min(last, Math.round((px - X0) / (X1 - X0) * last || 0)));
+    cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i));
+    hoverDot.setAttribute("cx", x(i)); hoverDot.setAttribute("cy", y(h[i]));
+    tip.textContent = h[i] + " dBm, " + (last - i ? `${last - i} heartbeat${last - i === 1 ? "" : "s"} ago` : "latest");
+    tip.setAttribute("x", x(i) > 160 ? x(i) - 6 : x(i) + 6);
+    tip.setAttribute("text-anchor", x(i) > 160 ? "end" : "start");
+    for (const m of [cross, hoverDot, tip]) m.setAttribute("visibility", "visible");
+  };
+  root.onmouseleave = () => { for (const m of [cross, hoverDot, tip]) m.setAttribute("visibility", "hidden"); };
+}
+
+/* ---------- event log, alerts, sound ---------- */
+let problemsOnly = false, paused = false, logKey = "", lastEvent = null, soundOn = false, audio = null;
+const isProblem = e => !["hb", "online", "new"].includes(e.kind);
+function drawLog(events) {
+  const key = (events.at(-1)?.id ?? 0) + ":" + problemsOnly;
+  if (paused || key === logKey) return;
+  logKey = key;
+  const shown = events.filter(e => !problemsOnly || isProblem(e)).reverse();
+  $("log").replaceChildren(...shown.map(e => {
+    const [icon, cls] = KIND[e.kind] ?? ["•", "muted"];
+    return el("li", {}, el("time", {}, e.t), el("span", { className: cls }, icon),
+              el("span", { className: isProblem(e) ? "problem" : "" }, e.text));
+  }));
+  if (!shown.length) $("log").append(el("li", {}, "", "", problemsOnly ? "No problems so far." : "Waiting for the first heartbeat."));
+}
+function beep() {
+  if (!soundOn || !audio) return;
+  const o = audio.createOscillator(), g = audio.createGain();
+  o.frequency.value = 880;
+  g.gain.setValueAtTime(0.2, audio.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.5);
+  o.connect(g).connect(audio.destination);
+  o.start(); o.stop(audio.currentTime + 0.5);
+}
+function newEvents(st) {
+  const top = st.events.at(-1)?.id ?? 0;
+  if (lastEvent !== null) for (const e of st.events) if (e.id > lastEvent) {
+    if (e.kind === "hb") pulse(st, e.node);
+    if (e.kind === "offline" || (e.kind === "link" && !st.link)) beep();
+  }
+  lastEvent = top;  // first load: do not replay old events
+}
+function drawAlert(st) {
+  const off = st.nodes.filter(n => n.status === "OFFLINE");
+  let text = "";
+  if (!st.link) text = `✕ No link to the node at ${st.url}. Join its Wi-Fi (BLACKOUT_A or BLACKOUT_C). Details: ${st.error}`;
+  else if (off.length) text = "✕ " + off.map(n => `Node ${n.name} is OFFLINE, silent for ${dur(n.age_ms / 1000)}`).join(". ") + ". Check its power and antenna.";
+  if ($("alert").textContent !== text) $("alert").textContent = text;  // only re-announce when it changes
+  $("alert").classList.toggle("show", !!text);
+  document.title = (text ? "⚠ " + (st.link ? off.map(n => n.name).join(", ") + " OFFLINE" : "NO LINK") + " · " : "") + "BLACKOUT NET monitor";
+}
+
+function render(st) {
+  $("link").replaceChildren(el("span", { className: st.link ? "good" : "crit" }, st.link ? "●" : "✕"),
+                            st.link ? " Connected to node " + st.self.name : " No link to node");
+  drawAlert(st);
+  const on = st.nodes.filter(n => n.status === "ONLINE").length;
+  const got = st.nodes.reduce((a, n) => a + n.received, 0), lost = st.nodes.reduce((a, n) => a + n.lost, 0);
+  $("t-online").textContent = st.nodes.length ? `${on} of ${st.nodes.length}` : "–";
+  $("t-online-sub").textContent = st.nodes.length ? (on === st.nodes.length ? "all far nodes are heard" : "see the alert above") : "no node heard yet";
+  $("t-got").textContent = got.toLocaleString();
+  $("t-got-sub").textContent = "one expected every " + dur(st.hb_interval_s) + " per node";
+  $("t-lost").textContent = lost.toLocaleString();
+  $("t-lost-sub").textContent = got + lost ? Math.round(100 * got / (got + lost)) + " % delivered" : "";
+  $("t-wifi").textContent = st.self.wifi_clients ?? "–";
+  $("t-up").textContent = st.self.uptime_s == null ? "–" : dur(st.self.uptime_s);
+  $("t-up-sub").textContent = st.self.name ? "node " + st.self.name : "";
+  drawMap(st);
+  for (const n of st.nodes) updateCard(n, st);
+  drawLog(st.events);
+  newEvents(st);
+  $("foot").textContent = "Every heartbeat is also saved to " + st.csv;
+}
+
+async function tick() {
+  try {
+    render(await (await fetch("/state", { cache: "no-store" })).json());
+  } catch (e) {
+    $("alert").textContent = "✕ The monitor script is not running. Start it again with: python monitor.py";
+    $("alert").classList.add("show");
+    $("link").replaceChildren(el("span", { className: "crit" }, "✕"), " Monitor stopped");
+  }
+  setTimeout(tick, 1000);
+}
+
+$("f-all").onclick = $("f-prob").onclick = e => {
+  problemsOnly = e.currentTarget.id === "f-prob";
+  $("f-all").setAttribute("aria-pressed", !problemsOnly);
+  $("f-prob").setAttribute("aria-pressed", problemsOnly);
+};
+$("pause").onclick = () => {
+  paused = !paused;
+  $("pause").setAttribute("aria-pressed", paused);
+  $("pause").textContent = paused ? "Resume" : "Pause";
+};
+$("sound").onclick = () => {
+  soundOn = !soundOn;
+  audio ??= new AudioContext();  // browsers only allow sound after a click
+  $("sound").setAttribute("aria-pressed", soundOn);
+  $("sound").textContent = "Sound alerts: " + (soundOn ? "on" : "off");
+  beep();
+};
+tick();
+</script>
+</body>
+</html>
