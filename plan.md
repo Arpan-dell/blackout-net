@@ -104,7 +104,7 @@ flowchart TD
     SLOW2 --> ANN
     FAST --> ANN["CFG packet: new SF + time left,<br/>sent twice, relayed like any packet"]
     ANN --> SW["every node switches at the same moment"]
-    SW --> CHK{"a node hears nothing<br/>for 2.5 heartbeat periods?"}
+    SW --> CHK{"a node hears nothing from the HQ<br/>for 2.5 heartbeat periods?"}
     CHK -- yes --> SCAN["it steps through SF7–SF10<br/>until it hears the network"]
     CHK -- no --> M
     SCAN --> M
@@ -237,7 +237,9 @@ dozen nodes, and a whole city needs routing towards the nearest HQ, which is not
 2. Plug in one board and flash its role: `pio run -e node_a -t upload` (then `node_b`, `node_c`).
 3. Open `pio device monitor` and check for `selftest ok` and `RADIO ok`.
 4. Position: type `pos 28.749912 77.116403` (its latitude and longitude, from a maps app) into the serial
-   monitor; the node keeps it through restarts. `pos clear` removes it. Nodes on drones can skip this.
+   monitor; the node keeps it through restarts. `pos clear` removes it. Or skip this and set it in the control
+   room: pick the node above the map, paste the position from a maps app and press Set (or click the map).
+   Nodes on drones can skip both.
 
 ### 5.4 Bring-up tests, in order
 
@@ -278,6 +280,7 @@ distance and must be stated if shown.
 | Relay drone: range gained by height | section 5.8: `python tools/relay_compare.py ground.csv air.csv` |
 | Scout drone: SOS to camera on the spot | section 5.8: time of the SOS press to the moment the video shows the spot |
 | Sender distance guide | walk a phone away from node A, note its signal in the control room against the real distance |
+| Link budget and path-loss exponent | range-test readings into `electronics/range_test.csv`, then `python electronics/link_budget.py` |
 
 Report the counts, the settings (SF9, 125 kHz, 8 dBm setting, antennas, heights, distances) and only
 figures that were measured.
@@ -349,8 +352,10 @@ Without any hardware: `python tools/control_room.py --mock` runs a fake node C a
 | Priority test script | written, not yet run (needs the radios) |
 | Control room (`tools/control_room.py`) | written, self-test passes; checked in a browser against a fake node C and a fake GCS, scout sent and flown on the fake GCS. Not yet run with node C, the real GCS or S-01 |
 | Drone plan in the control room (relay hover points, scout flight check, "Fly to plan") | written, self-test passes; checked against the fake GCS with relay I-01 and S-01 flying. Not yet run with real drones |
+| Control room with real hardware | node C found on USB by itself, nodes B and C shown; live ZR10 picture pulled straight from the Jetson (1280×720); nodes placed on the map by clicking. GCS fly-to not yet tried with a real drone |
 | Forwarder on S-01 (`tools/hq_forward.py`) | written, not yet run |
 | City plan (`tools/city_plan.py`) | written, self-test passes, Delhi grid drawn |
+| Electronics analysis (`electronics/`) | 4 Python simulations and 2 LTspice circuits, all run here and checked against theory; figures in `electronics/figures/`. Range-test readings still to be entered |
 | Relay comparison (`tools/relay_compare.py`) | written, self-test passes; needs the two flights |
 | Relay and scout flights | to do (recorded before the hackathon) |
 | Real flag-mast positions for the city plan | to collect |

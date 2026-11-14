@@ -5,3 +5,7 @@ heartbeats.csv
 messages.jsonl
 city_plan.html
 arduino/
+arduino_phase2/
+electronics/*.raw
+electronics/*.log
+electronics/*.db

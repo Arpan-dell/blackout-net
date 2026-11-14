@@ -5,7 +5,8 @@ Node C (the HQ) prints its node table and every message it receives on its USB p
   node C riding on the gimbal drone, whose
   companion computer runs tools/hq_forward.py:     python tools/control_room.py --udp 15100
 With the drones' GCS running on this laptop, also give   --gcs http://localhost:8765 --scout S-01
-for the gimbal camera's live video, the map tiles, the scout's position and the "Send scout" button.
+for the map tiles, the scout's position and the "Send scout" button, and the camera if --camera is not given.
+The gimbal camera, always on and without the GCS:   --camera rtsp://192.168.88.121:8554/zr10
 Add the relay drones and the node each carries, where node C rides, and the measured link range:
                                                    --relays I-01=B --hq-on-scout --range 1500
 Nodes on drones are then shown at their drone's GPS position from the GCS.
@@ -15,7 +16,7 @@ Self-test:                                         python tools/control_room.py 
 With no options it finds node C on this laptop's USB by itself (double-click tools/control_room.bat).
 Needs pyserial for --serial (pip install pyserial); everything else is the standard library.
 """
-import argparse, collections, csv, datetime, http.server, json, math, os, socket, tempfile, threading, time
+import argparse, collections, csv, datetime, http.server, json, math, os, re, socket, tempfile, threading, time
 import urllib.request
 import webbrowser
 
@@ -35,6 +36,28 @@ def search_radius_m(phone_rssi):
     if not phone_rssi:
         return 100  # unknown (the node's own SOS button): anywhere within Wi-Fi reach of the node
     return round(min(150, max(10, 2 * 10 ** ((-40 - phone_rssi) / 25))))
+
+
+DMS = re.compile(r"""(\d+)\s*[°d]\s*(\d+)\s*['′m]\s*([\d.]+)\s*(?:"|″|''|s)?\s*([NSEW])""", re.I)
+
+
+def parse_coords(text):
+    """(lat, lon) from what a maps app shows: 28°44'58.3"N 77°06'53.1"E, or decimal 28.749528, 77.114750.
+    None if it is not a position."""
+    parts = DMS.findall(text)
+    if len(parts) == 2:
+        val = {}
+        for d, m, sec, hemi in parts:
+            v = int(d) + int(m) / 60 + float(sec) / 3600
+            val["lat" if hemi.upper() in "NS" else "lon"] = -v if hemi.upper() in "SW" else v
+        pair = (val.get("lat"), val.get("lon"))
+    else:
+        nums = re.findall(r"-?\d+(?:\.\d+)?", text)
+        pair = (float(nums[0]), float(nums[1])) if len(nums) == 2 else (None, None)
+    lat, lon = pair
+    if lat is None or lon is None or abs(lat) > 90 or abs(lon) > 180 or (lat == 0 and lon == 0):
+        return None
+    return round(lat, 6), round(lon, 6)
 
 
 def distance_m(lat1, lon1, lat2, lon2):
@@ -129,7 +152,7 @@ class ControlRoom:
 
     def __init__(self, mon, log_path, source, cfg=None):
         self.mon, self.log_path, self.source = mon, log_path, source
-        self.msgs, self.lines = {}, collections.deque(maxlen=200)
+        self.msgs, self.lines, self.placed = {}, collections.deque(maxlen=200), {}
         self.last_status, self.scout, self.scout_error = 0.0, None, ""
         self.drones = {}  # GCS id -> telemetry, for the scout and the relay drones
         self.cfg = cfg or {"range_m": 1500, "relay_alt": 40, "speed": 8, "scout": "S-01", "relays": [], "hq_on_scout": False}
@@ -143,7 +166,9 @@ class ControlRoom:
                         pass  # a half-written last line after a crash
 
     def _apply(self, rec):
-        if rec["kind"] == "msg":
+        if rec["kind"] == "pos":  # a node's position set here in the control room
+            self.placed[rec["key"]] = (rec["lat"], rec["lon"])
+        elif rec["kind"] == "msg":
             self.msgs.setdefault(rec["key"], rec["msg"])
         elif rec["key"] in self.msgs:
             self.msgs[rec["key"]][rec["kind"]] = rec["at"]  # "handled" or "scout_sent"
@@ -214,6 +239,12 @@ class ControlRoom:
             d = st["drones"].get(carried.get(n.get("name")))
             if has_pos(d) and d.get("connected"):  # off the drone, or the drone is off: the typed position stays
                 n["lat"], n["lon"], n["pos_src"] = d["lat"], d["lon"], f"drone {d['id']}"
+            elif n.get("name") in self.placed:  # set in the control room: used instead of the node's own
+                (n["lat"], n["lon"]), n["pos_src"] = self.placed[n["name"]], "placed"
+        where = {n.get("name"): n for n in [st["self"]] + st["nodes"] if has_pos(n)}
+        for m in st["messages"]:  # a message that arrived before its node had a position gets it now
+            if not has_pos(m) and m["node"] in where:
+                m["lat"], m["lon"] = where[m["node"]]["lat"], where[m["node"]]["lon"]
 
     def plan(self, st):
         cfg = self.cfg
@@ -307,6 +338,39 @@ def find_nodes(wait_s=7):
     return found
 
 
+class Camera:
+    """Pulls the camera's RTSP stream all the time and keeps the latest frame as a JPEG for the page:
+    no GCS needed and nothing that stops when nobody is watching."""
+
+    def __init__(self, url):
+        self.url, self.jpeg, self.at, self.error = url, None, 0.0, "connecting to the camera"
+
+    def run(self):
+        os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS",
+                              "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|max_delay;500000|timeout;5000000")
+        import cv2  # pip install opencv-python-headless
+        while True:
+            cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
+            opened = time.time()
+            while cap.isOpened():
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                now = time.time()
+                if now - opened < 1.5 or now - self.at < 0.06:  # grey smears before the first keyframe; 15 fps is plenty
+                    continue
+                ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                if ok:
+                    self.jpeg, self.at, self.error = buf.tobytes(), now, ""
+            cap.release()
+            self.error = f"no video from {self.url}; trying again"
+            time.sleep(2)
+
+    def status(self):
+        stale = time.time() - self.at > 3
+        return {"error": self.error or ("the picture has stopped" if stale else ""), "live": not stale}
+
+
 def read_serial(port, room):
     import serial  # pip install pyserial
     while True:
@@ -323,7 +387,7 @@ def read_serial(port, room):
                             room.feed(raw.decode("utf-8", "replace"))
         except Exception as e:  # unplugged, or the wrong port: show it and keep trying
             with room.mon.lock:
-                room.mon.fail(f"USB port {port}: {e}")
+                room.mon.fail(f"node C is switched off or unplugged ({port})")
             time.sleep(2)
 
 
@@ -345,7 +409,7 @@ def watchdog(room):
             room.check_stale()
 
 
-def ui_server(room, gcs, port):
+def ui_server(room, gcs, port, camera=None):
     class Handler(http.server.BaseHTTPRequestHandler):
         def send(self, code, body, kind="application/json"):
             if not isinstance(body, bytes):
@@ -360,12 +424,48 @@ def ui_server(room, gcs, port):
             if self.path == "/state":
                 st = room.snapshot()
                 st["gcs"] = gcs and {"base": gcs.base, "scout": gcs.scout, "alt": gcs.alt}
+                st["camera"] = camera and camera.status()
                 return self.send(200, st)
+            if self.path.startswith("/video.mjpg") and camera:
+                return self.stream()
             if self.path not in FILES:
                 return self.send_error(404)
             name, kind = FILES[self.path]
             with open(os.path.join(HERE, name), "rb") as f:
                 self.send(200, f.read(), kind)
+
+        def stream(self):  # the camera as MJPEG, which an <img> shows as live video
+            self.send_response(200)
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            last = 0.0
+            try:
+                while True:
+                    jpeg, at = camera.jpeg, camera.at
+                    if jpeg and at != last:
+                        last = at
+                        self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(jpeg)
+                                         + jpeg + b"\r\n")
+                    time.sleep(0.03)
+            except OSError:  # the page was closed
+                pass
+
+        def place(self, body):
+            try:
+                node = str(body["key"])
+                pos = parse_coords(str(body["text"])) if "text" in body else parse_coords(f"{body['lat']} {body['lon']}")
+                assert len(node) == 1 and "A" <= node <= "H"
+            except (KeyError, TypeError, ValueError, AssertionError):
+                return self.send(400, {"error": "Pick a node first"})
+            if not pos:
+                return self.send(400, {"error": "That is not a position. Paste it as your maps app shows it, for example  "
+                                                "28°44'58.3\"N 77°06'53.1\"E   or   28.749528, 77.114750"})
+            lat, lon = pos
+            with room.mon.lock:
+                room.record({"kind": "pos", "key": node, "lat": lat, "lon": lon})
+                room.mon.event("handled", node, f"Node {node} placed on the map at {lat:.6f}, {lon:.6f}")
+            return self.send(200, {"ok": True, "lat": lat, "lon": lon})
 
         def do_POST(self):
             try:
@@ -375,8 +475,9 @@ def ui_server(room, gcs, port):
                 return self.send(400, {"error": "send {\"key\": ...} or, for /api/relay, {\"drone\": ...}"})
             if self.path == "/api/relay":
                 return self.fly_relay(key)
-            with room.mon.lock:
-                msg = dict(room.msgs.get(key) or {})
+            if self.path == "/api/place":
+                return self.place(body)
+            msg = next((m for m in room.snapshot()["messages"] if m["key"] == key), None)
             if not msg:
                 return self.send(404, {"error": "no such message"})
             at = datetime.datetime.now().isoformat(timespec="seconds")
@@ -516,6 +617,11 @@ def mock(room, gcs_port):
 # ---------------------------------------------------------------------------------------------- self-test
 def selftest():
     assert search_radius_m(None) == 100 and search_radius_m(0) == 100
+    assert parse_coords("""28°44'58.3"N 77°06'53.1"E""") == (28.749528, 77.11475)
+    assert parse_coords("33°52'10\"S 151°12'30\"E") == (-33.869444, 151.208333)
+    assert parse_coords("28.749528, 77.114750") == (28.749528, 77.11475) and parse_coords("-33.5 -70.25") == (-33.5, -70.25)
+    assert parse_coords("hello") is None and parse_coords("91, 10") is None and parse_coords("0 0") is None
+    assert parse_coords("28.7") is None and parse_coords("1 2 3") is None
     assert node_name(b'*wm:Starting\r\n@NODES {"self":{"name":"C"},"nodes":[]}\r\n@NOD') == "C"
     assert node_name(b'@NODES {"self":{"name":"C"') is None and node_name(b"garbage\n\xff\n") is None
     assert search_radius_m(-55) == 10 and search_radius_m(-70) == 32 and search_radius_m(-95) == 150
@@ -568,14 +674,28 @@ def selftest():
     assert room.snapshot()["nodes"][0]["lat"] == 28.72
     room.cfg, room.drones = dict(room.cfg, relays=[], hq_on_scout=False), {}
     assert room.snapshot()["nodes"][0]["lat"] == 28.72  # the node's own (typed) position again
+    room.record({"kind": "pos", "key": "C", "lat": 28.5, "lon": 77.5})  # set here: used instead of the node's own
+    st = room.snapshot()
+    assert (st["self"]["lat"], st["self"]["pos_src"]) == (28.5, "placed"), st["self"]
+    room.cfg, room.drones = dict(room.cfg, hq_on_scout=True), {"S-01": {"id": "S-01", "connected": True, "lat": 28.9, "lon": 77.9}}
+    assert room.snapshot()["self"]["lat"] == 28.9  # a connected drone's live GPS still wins
+    room.cfg, room.drones = dict(room.cfg, hq_on_scout=False), {}
+    del room.placed["C"]
     room.record({"kind": "handled", "key": "A-7", "at": "t"})
     again = ControlRoom(Monitor("usb"), path, "COM9")  # a restart keeps the messages and what was done
-    assert len(again.msgs) == 2 and again.msgs["A-7"]["handled"] == "t"
-    srv = ui_server(room, None, 0)  # the page's own request path, with its locking
+    assert len(again.msgs) == 2 and again.msgs["A-7"]["handled"] == "t" and again.placed["C"] == (28.5, 77.5)
+    del again.placed["C"]
+    cam = Camera("rtsp://none")
+    cam.jpeg, cam.at = b"\xff\xd8fake", time.time()
+    srv = ui_server(room, None, 0, cam)  # the page's own request path, with its locking
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
             f"http://127.0.0.1:{srv.server_address[1]}/state", timeout=3) as r:
-        assert len(json.load(r)["messages"]) == 2
+        st = json.load(r)
+        assert len(st["messages"]) == 2 and st["camera"] == {"error": "connecting to the camera", "live": True}
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+            f"http://127.0.0.1:{srv.server_address[1]}/video.mjpg", timeout=3) as r:
+        assert b"--frame" in r.read(60) and r.headers["Content-Type"].startswith("multipart/x-mixed-replace")
     srv.shutdown()
     room.check_stale(time.time() + STALE_S + 1)
     assert not room.mon.link and room.snapshot()["nodes"][0]["status"] == "UNKNOWN"
@@ -590,6 +710,8 @@ def main():
     src.add_argument("--mock", action="store_true", help="fake node C and fake GCS, no hardware")
     ap.add_argument("--gcs", metavar="URL", help="the drones' GCS, e.g. http://localhost:8765")
     ap.add_argument("--scout", default="S-01", help="GCS id of the gimbal-camera drone (default S-01)")
+    ap.add_argument("--camera", metavar="RTSP_URL",
+                    help="pull the camera directly and always, e.g. rtsp://192.168.88.121:8554/zr10 (no GCS needed)")
     ap.add_argument("--scout-alt", type=float, default=40, help="height above home the scout flies to, metres")
     ap.add_argument("--scout-speed", type=float, default=8, help="the scout's cruise speed in m/s, for the flight time")
     ap.add_argument("--relays", default="", metavar="DRONE=NODE,...",
@@ -599,8 +721,9 @@ def main():
                     help="node C rides on the scout: show it at the scout's live position")
     ap.add_argument("--range", type=float, default=1500,
                     help="metres one LoRa link covers (measure it with relay_compare.py); hops are planned at 80 %%")
-    ap.add_argument("--messages", default="messages.jsonl", help="every message and what was done about it")
-    ap.add_argument("--csv", default="heartbeats.csv", help="every heartbeat is appended here")
+    ap.add_argument("--messages", default=os.path.join(HERE, "..", "messages.jsonl"),
+                    help="every message, node position set here, and what was done; kept in the project folder")
+    ap.add_argument("--csv", default=os.path.join(HERE, "..", "heartbeats.csv"), help="every heartbeat is appended here")
     ap.add_argument("--port", type=int, default=8780, help="port of the control room page on this laptop")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
@@ -639,10 +762,14 @@ def main():
     source = f"USB {a.serial}" if a.serial else f"UDP port {a.udp}" if a.udp else "mock node C"
     room = ControlRoom(Monitor(source, write_row, os.path.abspath(a.csv)), a.messages, source, cfg)
     gcs = Gcs(a.gcs, a.scout, a.scout_alt, [d for d, _ in relays]) if a.gcs else None
+    camera = Camera(a.camera) if a.camera else None
     try:
-        srv = ui_server(room, gcs, a.port)
+        srv = ui_server(room, gcs, a.port, camera)
     except OSError:
-        raise SystemExit(f"Port {a.port} is busy. Is the control room already running? Otherwise add --port {a.port + 1}")
+        raise SystemExit(f"A control room is ALREADY RUNNING on port {a.port}, with its old options. Close that one first "
+                         f"(Ctrl+C in its window), then start this again. Nothing was started now.")
+    if camera:
+        threading.Thread(target=camera.run, daemon=True).start()
     if a.mock:
         mock(room, 8799)
     elif a.serial:

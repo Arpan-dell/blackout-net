@@ -19,7 +19,7 @@ phone signal) is the same in both phases; see "Position" and "Control room" in `
 - The HQ announces a switch; the announcement is relayed like any message, and every node switches at the
   same moment, about 6–10 seconds later. All nodes must use the same SF, because an SX1278 only hears
   packets sent with its own SF.
-- A node that hears nothing for 2.5 heartbeat periods assumes it missed a switch, or has just started, and
+- A node that hears nothing from the HQ (node C) for 2.5 heartbeat periods, even if it hears other nodes, assumes it missed a switch, or has just started, and
   steps through SF7–SF10 until it hears the network again. The HQ never searches; it stays put so the
   others can find it.
 - If a node goes silent, the HQ steps the network slower, one step per check, up to SF10, so a node that has

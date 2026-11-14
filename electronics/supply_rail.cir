@@ -1,0 +1,23 @@
+* BLACKOUT NET: why a node restarts when it transmits, and what the 10 uF capacitor does.
+* USB 5 V -> cable -> 3.3 V regulator (AMS1117 on the boards) -> ESP + Ra-02.
+* The regulator needs microseconds to react to a sudden load; until then the current comes through the
+* wiring's inductance (modelled as Lloop) or from the capacitor at the 3.3 V pins.
+* Load: 80 mA steady, plus the worst moment: a Wi-Fi burst of 300 mA for 1 ms (at 10 ms) landing while the
+* LoRa radio transmits (40 mA, from 9.5 ms). The plot covers 14 ms around it.
+* The ESP restarts (brown-out) when its supply falls below about 2.5-2.8 V.
+* Run it: the plot shows V(rail) for three capacitor values (.step).
+.param Cpins=10u
+V5 usb 0 5
+Rcable usb vin 0.6
+Cin vin 0 10u Rser=0.1
+B1 reg 0 V=min(3.3, V(vin)-1.1)
+Lloop reg rail 1u Rser=0.15
+Cbulk rail 0 {Cpins} Rser=0.05
+Cdec rail 0 100n
+Ibase rail 0 80m
+Iwifi rail 0 PULSE(0 300m 10m 0.2u 0.2u 1m 100m)
+Ilora rail 0 PULSE(0 40m 9.5m 10u 10u 370m 1)
+.step param Cpins list 0.1u 10u 100u
+.tran 0 14m 0 0.2u
+.meas TRAN vmin MIN V(rail) FROM 5m TO 14m
+.end

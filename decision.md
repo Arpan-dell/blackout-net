@@ -19,7 +19,7 @@ Each entry gives what was chosen, what else was considered, and why. The procedu
 
 ### Two boards supported: ESP32 DevKit and NodeMCU ESP8266 (added 15 November 2026)
 - **Instead of:** ESP32 only.
-- **Why:** the team built nodes B and C on NodeMCU boards. One program serves both; the pins, storage and
+- **Why:** node B is a NodeMCU (ESP8266); nodes A and C are ESP32-WROOM DevKits. One program serves both; the pins, storage and
   library differences switch by themselves when the board is chosen in the Arduino IDE. The radio protocol
   is the same, so ESP32 and ESP8266 nodes work together.
 - **Cost:** an ESP8266 hotspot cannot measure a phone's signal, so the sender's search circle needs node A
@@ -258,6 +258,9 @@ Each entry gives what was chosen, what else was considered, and why. The procedu
 - **Why:** it needs no shared clock and also handles newly started nodes. The HQ stays put so there is
   something fixed to find.
 - **Cost:** finding the network again can take up to about 5 minutes.
+- **Fixed 15 November 2026:** "lost" first meant "heard nothing at all". On the real boards A and B restarted
+  together, came back on the default SF9 while the HQ was on SF7, heard each other, and so never searched.
+  Now only packets that came from the HQ (directly or relayed) count.
 
 ### Heartbeat every 60 s at SF10
 - **Why:** a heartbeat at SF10 takes about twice the air time of one at SF9; doubling the interval keeps
@@ -318,6 +321,22 @@ Each entry gives what was chosen, what else was considered, and why. The procedu
 - **Cost:** no terrain, buildings, wind or battery in the plan; it is only as good as `--range`. For many
   nodes, a proper placement search would use fewer relays.
 
+### Camera pulled straight from the Jetson, all the time (added 15 November 2026)
+- **Instead of:** only through the GCS's video proxy.
+- **Why:** the team wants the picture in the control room always. The GCS has to be running for its proxy,
+  and it stops a stream 10 s after the last viewer leaves. `--camera rtsp://…` makes the control room pull
+  the stream itself (OpenCV, already installed for the GCS) and keep the latest frame ready, GCS or not.
+- **Cost:** with the GCS also showing the camera, the stream is pulled twice. Harmless on the Ethernet
+  cable; over the drones' Wi-Fi it doubles the video traffic, so close one of the two viewers in flight.
+
+### Node positions are set in the control room (added 15 November 2026)
+- **Instead of:** only typing `pos lat lon` into each node over USB, or reflashing.
+- **Why:** a node with no position cannot be drawn, so the map stayed empty although the nodes were
+  connected, and the team wants to move nodes without touching them. In the control room a position is
+  pasted as the maps app shows it (`28°44'58.3"N 77°06'53.1"E` or decimal) or clicked on the map. It is kept
+  in `messages.jsonl` and used instead of the node's own; a connected drone's live GPS still wins.
+- **Cost:** the node itself does not learn it, so other tools (the phone page, the monitor) do not see it.
+
 ### The scout flies only when an operator confirms
 - **Instead of:** sending S-01 automatically on every SOS.
 - **Why:** a message on an open hotspot is not proof of an emergency, and a drone flight is a safety
@@ -348,6 +367,25 @@ Each entry gives what was chosen, what else was considered, and why. The procedu
 ### Flights recorded before judging
 - **Why:** flying is not allowed at the venue. The ground side runs live on the table with the drones parked
   and powered, and the videos show the same thing in the air.
+
+## Electronics analysis
+
+### Relays regenerate packets (decode-and-forward); no amplifier is added
+- **Instead of:** an external amplifier or "boosting" weak packets before passing them on.
+- **Why:** each relay already demodulates to bits, checks the CRC and sends a new packet at full power, so
+  noise never builds up hop to hop (`electronics/relay_regeneration.py`: 3 hops at −13.5 dB each, 60 % against
+  0 % for an amplifying relay). More transmit power would also break the 10 mW ERP limit.
+
+### Python and LTspice for the analysis, not MATLAB
+- **Instead of:** MATLAB.
+- **Why:** MATLAB is not installed on the team laptop; Python (numpy, scipy, matplotlib) and LTspice are, so every
+  script and circuit was run and checked here before it is shown. The Python maps line for line to MATLAB if
+  a judge asks.
+
+### Harmonic filter and supply capacitors as the hardware improvements
+- **Why:** both fix real, measurable things. The 5th-order Chebyshev low-pass removes the 867 MHz and 1300 MHz
+  harmonics (−25 and −46 dB in LTspice) at 0.24 dB cost; the 10 µF capacitor keeps the 3.3 V rail above the
+  brown-out level during transmit bursts (2.62 V → 3.19 V in LTspice), which matches node B's restarts.
 
 ## Repository
 

@@ -23,6 +23,7 @@ hackathon.
 | [tools/priority_test.py](tools/priority_test.py) | Measures how much faster SOS messages get through than normal ones under load. |
 | [tools/adaptive_test.py](tools/adaptive_test.py) | Phase 2: measures adaptive SF against the fixed setting. |
 | [tools/control_room.py](tools/control_room.py) | **Control room**: map of every node, every message with where the sender is, the gimbal drone's live camera from the GCS, and "Send scout here". `--mock` runs without hardware. |
+| [tools/control_room.bat](tools/control_room.bat) | Double-click start for the control room: finds node C on USB, camera straight from the Jetson. |
 | [tools/hq_forward.py](tools/hq_forward.py) | Runs on the gimbal drone's companion computer: passes node C's USB output to the control room over the drones' Wi-Fi. |
 | [tools/relay_compare.py](tools/relay_compare.py) | Drones: compares signal and delivery with node B on the ground and on the relay drone. |
 | [tools/city_plan.py](tools/city_plan.py) | Delhi-wide showcase: a node at every site (flag masts), hops to the nearest HQ, drawn on a map. |

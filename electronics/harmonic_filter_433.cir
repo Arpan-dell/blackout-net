@@ -1,0 +1,18 @@
+* BLACKOUT NET: 433 MHz transmit harmonic filter, between the Ra-02 and its antenna.
+* 5th-order Chebyshev low-pass, 0.1 dB ripple, cut-off 520 MHz, 50 ohm in and out (pi: C-L-C-L-C).
+* Normalised values g1..g5 = 1.1468 1.3712 1.9750 1.3712 1.1468;  C = g/(2*pi*fc*50), L = g*50/(2*pi*fc).
+* Inductors have 0.5 ohm series loss (Q about 110 at 433 MHz), like real 0603 RF chip inductors.
+* Open in LTspice and press Run: the plot is V(out) in dB, 0 dB = no loss.
+V1 in 0 AC 2 Rser=50
+C1 in 0 7.0p
+L2 in n2 21n Rser=0.5
+C3 n2 0 12p
+L4 n2 out 21n Rser=0.5
+C5 out 0 7.0p
+Rload out 0 50
+.ac dec 400 50Meg 3G
+.meas AC loss_433 FIND V(out) AT 433.5e6
+.meas AC h2_867 FIND V(out) AT 867e6
+.meas AC h3_1300 FIND V(out) AT 1300.5e6
+.meas AC f_3db WHEN mag(V(out))=0.70795 FALL=1
+.end

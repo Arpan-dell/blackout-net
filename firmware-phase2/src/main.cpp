@@ -531,7 +531,7 @@ void switchTick() {
   if (NODE_ID == HQ_ID || (int32_t)(now - silenceDeadline) < 0) return;
   uint8_t next = curSf >= SF_MAX ? SF_MIN : curSf + 1;
   scanning = true;
-  setSf(next, "nothing heard, searching for the network");
+  setSf(next, "HQ not heard, searching for the network");
   silenceDeadline = now + hbIntervalFor(next) * 1300UL + 3000;  // long enough to catch one heartbeat
 }
 
@@ -697,9 +697,13 @@ void pollRadio() {
   lastRxMs = millis() | 1;
   lastRssi = rssi;
   lastSnr = snr;
-  if (scanning) logf("FOUND the network on SF%u", curSf);
-  scanning = false;
-  silenceDeadline = millis() + lostMs();
+  // Only the HQ's own packets (direct or relayed) prove we are on the network's SF: two nodes that restarted
+  // together on the default SF hear each other there, and must still go and find the HQ.
+  if (p.origin == HQ_ID) {
+    if (scanning) logf("FOUND the network on SF%u", curSf);
+    scanning = false;
+    silenceDeadline = millis() + lostMs();
+  }
   handlePacket(p, rssi, snr, radio.getTimeOnAir(n) / 1000);
 }
 

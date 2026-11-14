@@ -41,6 +41,10 @@ button:disabled { opacity: .5; cursor: default; }
 .grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; margin-bottom: 14px; align-items: start; }
 @media (max-width: 1000px) { .grid { grid-template-columns: minmax(0, 1fr); } }
 .stack { display: grid; gap: 14px; }
+#place-text { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 8px; padding: 6px 8px; min-height: 36px; width: 290px; max-width: 100%; }
+#placebar { margin-bottom: 4px; } #place-say { margin: 0 0 8px; }
+select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 8px; padding: 6px 8px; min-height: 36px; }
+#map.placing { cursor: crosshair; outline: 3px solid var(--scout); }
 #map { height: 520px; border-radius: 8px; background: var(--grid); }
 .caption { color: var(--ink2); font-size: 12px; margin-top: 6px; }
 .video { position: relative; background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 16 / 9; }
@@ -98,9 +102,14 @@ footer { color: var(--ink2); font-size: 12px; margin-top: 10px; overflow-wrap: a
   <div class="grid">
     <section class="card">
       <div class="head"><h2>Map</h2>
-        <span><button id="lay-sat" aria-pressed="true">Satellite</button> <button id="lay-str" aria-pressed="false">Streets</button> <button id="fit">Show all</button></span></div>
+        <span><button id="lay-sat" aria-pressed="true">Satellite</button> <button id="lay-str" aria-pressed="false">Streets</button> <button id="fit">Show all</button> <button id="locate">My location</button></span></div>
+      <div class="head" id="placebar">
+        <span><label for="place-node" class="caption">Set position of node</label> <select id="place-node"></select></span>
+        <span><input id="place-text" type="text" autocomplete="off" aria-label="Position to set" placeholder="28°44'58.3&quot;N 77°06'53.1&quot;E  or  28.7495, 77.1147">
+          <button id="place-set">Set</button> <span class="caption">or</span> <button id="place">Click on map</button></span></div>
+      <div class="caption" id="place-say" role="status">Positions set here are kept by the control room: no need to touch the node. A node on a connected drone follows the drone.</div>
       <div id="map" role="application" aria-label="Map of the nodes, the SOS calls and the scout drone"></div>
-      <div class="caption" id="map-cap">Nodes at their positions (typed in on each node; nodes on drones move with the drone). Red squares are SOS calls; the red circle is where to look for the sender. Purple is the scout drone.</div>
+      <div class="caption" id="map-cap">Nodes at their positions (set above; nodes on connected drones follow the drone). Nodes on the same spot are drawn side by side. Red squares are SOS calls; the red circle is where to look for the sender. Purple is the scout drone.</div>
     </section>
     <div class="stack">
       <section class="card">
@@ -147,7 +156,7 @@ const dur = s => { s = Math.max(0, Math.round(s)); return s < 60 ? s + " s" : s 
 const hasPos = p => p && p.lat != null && p.lon != null;
 const fmtDist = m => m < 1000 ? Math.round(m) + " m" : (m / 1000).toFixed(2) + " km";
 const fmtPos = p => p.lat.toFixed(6) + ", " + p.lon.toFixed(6);
-const POS_SRC = { saved: "typed in over USB", build: "set at build", none: "none" };
+const POS_SRC = { saved: "typed in over USB", build: "set at build", placed: "set in the control room", none: "none" };
 const posSrc = s => POS_SRC[s] ?? s ?? "?";
 function distM(a, b) {
   const r = Math.PI / 180, dLat = (b.lat - a.lat) * r, dLon = (b.lon - a.lon) * r;
@@ -161,19 +170,23 @@ const map = L.map("map", { zoomControl: true, attributionControl: true }).setVie
 let tiles = null, layer = "sat", fitted = false;
 const marks = new Map(), lines = new Map(), circles = new Map();
 // SOS pins sit just above their node and the scout just below its point, so neither hides the node under it.
-const icon = (cls, text) => L.divIcon({ className: "", html: `<div class="pin ${cls}">${text}</div>`, iconSize: [38, 30],
+const icon = (cls, text, dx = 0) => L.divIcon({ className: "", html: `<div class="pin ${cls}">${text}</div>`, iconSize: [38, 30],
                                         iconAnchor: cls.startsWith("sos") ? [19, 50] : cls === "scout" || cls === "relay" ? [19, -20] :
-                                                    cls === "plan" ? [19, 15] : [15, 15] });
+                                                    cls === "plan" ? [19, 15] : [15 - dx, 15] });
 function setTiles(st) {
-  if (!st.gcs || tiles?.options.layerName === layer) return;
+  // From the GCS's offline cache while it answers; otherwise straight from the internet, if this laptop has it.
+  const viaGcs = st.gcs && !st.scout_error, sat = layer === "sat";
+  const url = viaGcs ? `${st.gcs.base}/tiles/${sat ? "sat" : "streets"}/{z}/{x}/{y}`
+            : sat ? "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                  : "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+  if (tiles?.options.src === url) return;
   tiles?.remove();
-  tiles = L.tileLayer(`${st.gcs.base}/tiles/${layer === "sat" ? "sat" : "streets"}/{z}/{x}/{y}`,
-                      { maxZoom: 19, layerName: layer, attribution: layer === "sat" ? "Imagery Esri, via the GCS tile cache" : "© OpenStreetMap, via the GCS tile cache" }).addTo(map);
+  tiles = L.tileLayer(url, { maxZoom: 19, src: url, attribution: (sat ? "Imagery © Esri" : "© OpenStreetMap contributors") + (viaGcs ? ", via the GCS tile cache" : "") }).addTo(map);
 }
-function put(key, pos, cls, text, tip) {  // create or move one marker
+function put(key, pos, cls, text, tip, dx) {  // create or move one marker
   let m = marks.get(key);
   if (!m) { m = L.marker([pos.lat, pos.lon], { keyboard: false }).addTo(map); marks.set(key, m); m.bindTooltip("", { direction: "top", offset: [0, -14] }); }
-  m.setLatLng([pos.lat, pos.lon]).setIcon(icon(cls, text)).setTooltipContent(tip);
+  m.setLatLng([pos.lat, pos.lon]).setIcon(icon(cls, text, dx)).setTooltipContent(tip);
   m.seen = true;
 }
 function line(key, a, b, style) {
@@ -194,11 +207,15 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).
 function drawMap(st) {
   setTiles(st);
   const me = st.self, byName = new Map(st.nodes.map(n => [n.name, n]));
+  // Nodes on the same spot (within about a metre) are drawn side by side, 34 px apart.
+  const spot = n => n.lat.toFixed(5) + "," + n.lon.toFixed(5), groups = new Map();
+  for (const n of [me, ...st.nodes].filter(hasPos)) groups.set(spot(n), [...(groups.get(spot(n)) ?? []), n.name]);
+  const dx = n => { const g = groups.get(spot(n)); return (g.indexOf(n.name) - (g.length - 1) / 2) * 34; };
   if (hasPos(me)) put("node:" + me.name, me, "hq " + (st.link ? "ONLINE" : "UNKNOWN"), me.name,
-                      `Node ${me.name}, HQ: this feed. Position: ${posSrc(me.pos_src)}`);
+                      `Node ${me.name}, HQ: this feed. Position: ${posSrc(me.pos_src)}`, dx(me));
   for (const n of st.nodes) {
     if (!hasPos(n)) continue;
-    put("node:" + n.name, n, n.status, n.name, `Node ${n.name}: ${STATUS[n.status][1]}, heard ${dur(n.age_ms / 1000)} ago, ${n.rssi} dBm`);
+    put("node:" + n.name, n, n.status, n.name, `Node ${n.name}: ${STATUS[n.status][1]}, heard ${dur(n.age_ms / 1000)} ago, ${n.rssi} dBm`, dx(n));
     const parent = n.via !== n.name && byName.has(n.via) ? byName.get(n.via) : me;
     if (hasPos(parent)) line("link:" + n.name, n, parent, { color: n.status === "OFFLINE" ? css("--crit") : css("--series"), weight: 3, opacity: .8, dashArray: n.status === "ONLINE" ? null : "6 6" });
   }
@@ -231,7 +248,7 @@ function drawMap(st) {
     if (target) line("scout-target", sc, target, { color: css("--scout"), weight: 3, dashArray: "8 6" });
   }
   sweep(marks); sweep(lines); sweep(circles);
-  if (!fitted && marks.size >= 2) { fitAll(); fitted = true; }
+  if (!fitted && marks.size >= 1) { fitAll(); fitted = true; }
 }
 function fitAll() {
   const pts = [...marks.values()].map(m => m.getLatLng());
@@ -246,11 +263,13 @@ function drawScout(st) {
              : sc ? [el("span", { className: sc.connected ? "good" : "crit" }, sc.connected ? "●" : "✕"), ` Scout ${sc.id} ${sc.connected ? (sc.armed ? "armed, " : "on ground, ") + (sc.mode ?? "") : "not connected"}`]
              : [el("span", { className: "crit" }, "✕"), " GCS not answering"];
   $("scoutpill").replaceChildren(...pill);
-  if (g) {
-    $("video-title").textContent = `Live camera · ${g.scout}`;
-    const src = `${g.base}/video/${g.scout}.mjpg`;
+  const cam = st.camera;  // pulled straight from the camera by this control room: always on, GCS or not
+  if (cam || g) {
+    $("video-title").textContent = "Live camera" + (g ? ` · ${g.scout}` : "") + (cam ? (cam.live ? " · live" : " · no picture") : "");
+    const src = cam ? "/video.mjpg" : `${g.base}/video/${g.scout}.mjpg`;
     if (videoSrc !== src) { videoSrc = src; $("video").src = src; }
-  } else showVideoNote("No video: start the control room with --gcs http://localhost:8765");
+    if (cam) { if (cam.live) $("video-note").classList.remove("show"); else showVideoNote("Camera: " + cam.error + ". Is the Jetson on and its cable in?"); }
+  } else showVideoNote("No video: start the control room with --camera rtsp://… (or --gcs http://localhost:8765)");
   const target = st.messages.find(m => m.scout_sent && !m.handled && hasPos(m));
   const facts = sc ? [["Mode", sc.mode ?? "–"], ["Height", sc.alt_m == null ? "–" : sc.alt_m.toFixed(0) + " m"], ["Battery", sc.battery_pct == null ? "–" : sc.battery_pct + " %"],
                       ["Position", hasPos(sc) ? fmtPos(sc) : "no GPS fix"],
@@ -259,7 +278,7 @@ function drawScout(st) {
   $("scout-facts").replaceChildren(...facts.map(([k, v]) => el("div", {}, el("dt", {}, k), el("dd", {}, v))));
 }
 function showVideoNote(text) { $("video-note").textContent = text; $("video-note").classList.add("show"); }
-$("video").onerror = () => showVideoNote("No video from the GCS. Is it running, and is the scout's camera streaming? Retrying every 5 s.");
+$("video").onerror = () => showVideoNote("No video. Is the GCS running (or start with --camera), and is the camera streaming? Retrying every 5 s.");
 $("video").onload = () => $("video-note").classList.remove("show");
 setInterval(() => { if ($("video-note").classList.contains("show") && videoSrc) $("video").src = videoSrc + "?t=" + Date.now(); }, 5000);
 $("video-retry").onclick = () => { if (videoSrc) $("video").src = videoSrc + "?t=" + Date.now(); };
@@ -355,6 +374,51 @@ function drawPlan(st) {
   $("plan-note").textContent = `Planned from the HQ at ${hasPos(p.hq) ? fmtPos(p.hq) : "?"} (${p.hq.source ?? "?"}), assuming ${fmtDist(p.range_m)} per LoRa link, hops at 80 % of that, straight lines. Measure the range and start with --range.`;
 }
 
+/* ---------- place a node on the map, my location ---------- */
+let placeKey = "";
+function drawPlace(st) {
+  const all = [st.self, ...st.nodes].filter(n => n.name);
+  const label = n => `${n.name}${n.name === st.self.name ? " (HQ)" : ""}${!hasPos(n) ? " · no position yet" : n.pos_src === "placed" ? " · set here" : (n.pos_src ?? "").startsWith("drone") ? " · on its drone" : " · its own"}`;
+  const key = all.map(label).join();
+  if (key !== placeKey) {  // rebuild the list only when it changes, or it would close while open
+    placeKey = key;
+    const keep = $("place-node").value;
+    $("place-node").replaceChildren(...all.map(n => el("option", { value: n.name }, label(n))));
+    $("place-node").value = keep || all.find(n => !hasPos(n))?.name || all[0]?.name || "";
+  }
+  $("place").disabled = $("place-set").disabled = !$("place-node").value;
+}
+async function placeNode(body, done) {
+  const r = await fetch("/api/place", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  $("place-say").textContent = r.ok ? done(j) : "✕ " + (j.error || "Could not set the position");
+  if (r.ok) { fitted = false; tick(true); }
+}
+$("place-set").onclick = () => placeNode({ key: $("place-node").value, text: $("place-text").value },
+  j => `Node ${$("place-node").value} set to ${j.lat.toFixed(6)}, ${j.lon.toFixed(6)}. Pick another node to give it the same or a new position.`);
+$("place-text").onkeydown = e => { if (e.key === "Enter") $("place-set").click(); };
+function stopPlacing(text) {
+  map.off("click", onPlace); $("map").classList.remove("placing");
+  $("place").textContent = "Click on map"; $("place").setAttribute("aria-pressed", "false");
+  if (text) $("place-say").textContent = text;
+}
+function onPlace(e) {
+  const node = $("place-node").value;
+  stopPlacing();
+  placeNode({ key: node, lat: e.latlng.lat, lon: e.latlng.lng }, j => `Node ${node} set to ${j.lat.toFixed(6)}, ${j.lon.toFixed(6)}.`);
+}
+$("place").onclick = () => {
+  if ($("map").classList.contains("placing")) return stopPlacing("Cancelled.");
+  $("map").classList.add("placing"); $("place").textContent = "Cancel"; $("place").setAttribute("aria-pressed", "true");
+  $("place-say").textContent = `Now click the map where node ${$("place-node").value} stands (zoom in first for accuracy).`;
+  map.on("click", onPlace);
+};
+document.addEventListener("keydown", e => { if (e.key === "Escape" && $("map").classList.contains("placing")) stopPlacing(); });
+$("locate").onclick = () => navigator.geolocation.getCurrentPosition(
+  p => map.setView([p.coords.latitude, p.coords.longitude], 17),
+  () => alert("This laptop would not give its location. Allow location for this page, or pan the map by hand."),
+  { enableHighAccuracy: true, timeout: 10000 });
+
 /* ---------- nodes, log, alerts ---------- */
 function drawNodes(st) {
   const me = st.self, rows = [];
@@ -395,7 +459,7 @@ function newEvents(st) {
 function drawAlert(st) {
   const sos = st.messages.filter(m => m.sos && !m.handled), off = st.nodes.filter(n => n.status === "OFFLINE"), parts = [];
   if (sos.length) parts.push(`🆘 ${sos.length} SOS waiting. Newest: #${sos[0].id} through node ${sos[0].node}: “${sos[0].text}”${sos[0].landmark ? " at " + sos[0].landmark : ""}`);
-  if (!st.link) parts.push(`✕ No feed from node C (${st.url}): ${st.error}`);
+  if (!st.link) parts.push(`✕ No feed from node C: ${st.error}. The control room hears every other node through node C, so they all show as unknown until it is back. They may still be running.`);
   if (off.length) parts.push("✕ " + off.map(n => `Node ${n.name} OFFLINE, silent ${dur(n.age_ms / 1000)}`).join(", "));
   const text = parts.join("   ·   ");
   if ($("alert").textContent !== text) $("alert").textContent = text;
@@ -406,7 +470,7 @@ function drawAlert(st) {
 function render(st) {
   $("feed").replaceChildren(el("span", { className: st.link ? "good" : "crit" }, st.link ? "●" : "✕"),
                             st.link ? ` Node ${st.self.name} feed, ${st.url}` : " No feed from node C");
-  drawAlert(st); drawMap(st); drawScout(st); drawPlan(st); drawMessages(st); drawNodes(st); drawLog(st.events); newEvents(st);
+  drawAlert(st); drawMap(st); drawScout(st); drawPlace(st); drawPlan(st); drawMessages(st); drawNodes(st); drawLog(st.events); newEvents(st);
   $("foot").textContent = `Heartbeats saved to ${st.csv}. Messages and what was done about them are kept on this laptop, so a restart of node C loses nothing here.`;
 }
 
