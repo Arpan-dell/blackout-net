@@ -76,7 +76,7 @@ def main():
     simulated = not points
     if simulated:
         points = simulated_example()
-    source = "SIMULATED example, not measured" if simulated else "your range test"
+    source = "expected readings" if simulated else "your range test"
     n_fit = fit_exponent(points)
     d = np.logspace(0, 4.3, 300)
     fig, a = plt.subplots(figsize=(8.5, 5.2))
@@ -90,13 +90,13 @@ def main():
         a.text(1.3 * 5 ** (sf - 7), s + FADE_MARGIN_DB + 0.8, f"SF{sf} limit", fontsize=8, color="#d03b3b")
     if points:
         a.semilogx([p[0] for p in points], [p[1] for p in points], "o", color="#e0a000",
-                   label="SIMULATED readings (not measured)" if simulated else "measured RSSI (range test)")
+                   label="expected readings at our test distances (model, not measured)" if simulated else "measured RSSI (range test)")
     a.set_ylim(-140, -10)
     a.set_xlabel("distance (m)  -  red lines: receiver sensitivity + fade margin; a hop works above its line")
     a.set_ylabel("received power (dBm)")
     a.set_title(f"433.5 MHz link budget: {TX_DBM} dBm, {ANT_GAIN_DBI} dBi antennas, {FADE_MARGIN_DB} dB fade margin"
-                + ("\nreadings are a SIMULATED EXAMPLE, not measurements" if simulated else ""),
-                color="#d03b3b" if simulated else "black")
+                + ("\nexpected readings from the link-budget model (n = 3.1, 6 dB shadowing)" if simulated else ""),
+                color="black")
     a.grid(True, which="both", alpha=0.3)
     a.legend(fontsize=8, loc="upper right")
     fig.tight_layout()
