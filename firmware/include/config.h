@@ -13,9 +13,21 @@
 #endif
 #define HQ_ID 3                  // messages go to this node; it serves the HQ inbox
 #define MAX_NODES 8              // ids 1..8 are shown as A..H
-#define HAS_WIFI (NODE_ID != 2)  // B is a radio-only relay; change to 1 to give it a hotspot too
+#define HAS_WIFI 1               // every node has a hotspot, so a phone can send an SOS through any of them
 
-// ---- wiring: Ra-02 (SX1278) to ESP32 DevKit V1, same on every node ----
+// ---- wiring: Ra-02 (SX1278). Two boards are supported; each picks its own pins when it is compiled ----
+#if defined(ESP8266)  // NodeMCU (ESP-12E), as in the ESP8266 wiring diagram; D-numbers are the board's labels
+#define PIN_SCK 14     // D5 (the ESP8266's fixed SPI pins)
+#define PIN_MISO 12    // D6
+#define PIN_MOSI 13    // D7
+#define PIN_NSS 15     // D8
+#define PIN_RESET 16   // D0
+#define PIN_DIO0 4     // D2
+#define PIN_DIO1 5     // D1
+#define PIN_BUTTON 0   // D3, SOS button to GND. It is also the boot pin: do not hold it while powering on
+#define PIN_LED 2      // D4, LED from 3V3 through 220 ohm: lit when the pin is LOW
+#define LED_ON LOW
+#else  // ESP32 DevKit V1
 #define PIN_SCK 18
 #define PIN_MISO 19
 #define PIN_MOSI 23
@@ -25,6 +37,11 @@
 #define PIN_DIO1 27
 #define PIN_BUTTON 25  // SOS push button to GND, uses the internal pull-up
 #define PIN_LED 2      // status LED through 220 ohm to GND
+#define LED_ON HIGH
+#endif
+
+// ---- control room: every node prints its node table on USB this often (tools/control_room.py) ----
+#define USB_STATUS_MS 5000
 
 // ---- radio: must be identical on every node ----
 #define LORA_FREQ_MHZ 433.5

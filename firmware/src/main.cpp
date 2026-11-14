@@ -6,8 +6,26 @@
 #include <DNSServer.h>
 #include <RadioLib.h>
 #include <SPI.h>
+#if defined(ESP8266)  // NodeMCU (ESP-12E) boards
+#include <EEPROM.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266WiFi.h>
+typedef ESP8266WebServer WebServer;
+#else  // ESP32 DevKit boards
+#include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <esp_netif.h>
+#include <esp_wifi.h>
+#if ESP_IDF_VERSION_MAJOR >= 5  // ESP32 Arduino core 3.x (Arduino IDE today); PlatformIO's 6.9.0 is core 2.x
+#include <esp_wifi_ap_get_sta_list.h>
+typedef wifi_sta_mac_ip_list_t StaIpList;
+#define getStaIps esp_wifi_ap_get_sta_list_with_ip
+#else
+typedef esp_netif_sta_list_t StaIpList;
+#define getStaIps esp_netif_get_sta_list
+#endif
+#endif
 #include <stdarg.h>
 #include <uri/UriBraces.h>
 
@@ -18,10 +36,12 @@
 // Packet on the air: 13 header bytes, then 0..40 payload bytes. LoRa's own CRC guards the lot.
 //   0 version | 1 type | 2 origin | 3 destination | 4-7 message id | 8 attempt | 9 ttl | 10 priority
 //   11 last hop | 12 payload length
-// DATA payload: category, text length, text, landmark. HB payload: uptime, latitude, longitude.
+// DATA payload: category, sender's phone signal at the gateway (dBm, signed; 0 = unknown), text length,
+//               text, landmark.
+// HB payload:   uptime, latitude, longitude.
 enum : uint8_t { T_DATA = 1, T_ACK = 2, T_HB = 3 };
 enum : uint8_t { P_NORMAL = 0, P_SOS = 1 };
-const uint8_t PROTO_VER = 1, HDR = 13, MAX_PAYLOAD = 40, BROADCAST = 0xFF;
+const uint8_t PROTO_VER = 3, HDR = 13, MAX_PAYLOAD = 40, BROADCAST = 0xFF;
 const int32_t NO_POS = 0x7FFFFFFF;
 
 struct Packet {
@@ -78,11 +98,12 @@ enum : uint8_t { S_QUEUED, S_TRANSMITTING, S_WAITING_ACK, S_DELIVERED, S_EXPIRED
 const char *const STATE_NAME[] = {"queued", "transmitting", "waiting_ack", "delivered", "expired"};
 const char *const CATEGORY[] = {"medical", "fire", "trapped", "supplies", "security", "other"};
 const uint8_t CAT_COUNT = 6, CAT_OTHER = 5;
-const uint8_t TEXT_ROOM = MAX_PAYLOAD - 2;  // bytes shared by text and landmark
+const uint8_t TEXT_ROOM = MAX_PAYLOAD - 3;  // bytes shared by text and landmark
 
 struct Msg {  // a message this node originated
   bool used;
   uint8_t prio, cat, tries, state, ackVia;
+  int8_t phoneRssi;
   uint32_t id, order, createdMs, retryAtMs, doneMs;
   float ackRssi;
   char text[TEXT_ROOM + 1], landmark[TEXT_ROOM + 1];
@@ -90,6 +111,7 @@ struct Msg {  // a message this node originated
 struct Ticket {  // a message addressed to this node (the HQ inbox)
   bool used, acked;
   uint8_t origin, prio, cat, via;
+  int8_t phoneRssi;
   uint32_t id, arrivedMs;
   float rssi, snr;
   char text[TEXT_ROOM + 1], landmark[TEXT_ROOM + 1];
@@ -129,6 +151,11 @@ float lastRssi = NAN, lastSnr = NAN;
 
 char nodeChar(uint8_t id) { return 'A' + id - 1; }
 String nodeName(uint8_t id) { return String(nodeChar(id)); }
+
+// This node's position: typed in over USB (kept in flash), else NODE_LAT / NODE_LON from platformio.ini.
+// Sent in every heartbeat. Nodes riding on drones get their live position from the drone, in the control room.
+int32_t posLatE6 = NO_POS, posLonE6 = NO_POS;
+const char *posSource = "none";  // saved | build | none
 
 // ---------------------------------------------------------------- log (serial + last lines for the web page)
 char logRing[40][112];
@@ -214,7 +241,7 @@ bool channelBusy() {
 }
 
 // ---------------------------------------------------------------- messages this node originates
-Msg *queueMessage(uint8_t prio, uint8_t cat, const char *text, const char *landmark) {
+Msg *queueMessage(uint8_t prio, uint8_t cat, const char *text, const char *landmark, int8_t phoneRssi) {
   Msg *slot = nullptr;
   for (Msg &m : outbox)  // a free slot, else the oldest finished message
     if (!m.used) { slot = &m; break; }
@@ -226,6 +253,7 @@ Msg *queueMessage(uint8_t prio, uint8_t cat, const char *text, const char *landm
   slot->used = true;
   slot->prio = prio;
   slot->cat = cat;
+  slot->phoneRssi = phoneRssi;
   slot->id = nextId++;
   slot->order = orderCounter++;
   slot->createdMs = millis();
@@ -262,16 +290,22 @@ void expireMessages() {
     }
 }
 
-void sendOwn(Msg &m) {
+Packet dataPacket(const Msg &m, uint8_t attempt) {
   Packet p = {};
   p.type = T_DATA; p.origin = NODE_ID; p.dest = HQ_ID; p.id = m.id;
-  p.attempt = ++m.tries; p.ttl = DATA_TTL; p.prio = m.prio;
+  p.attempt = attempt; p.ttl = DATA_TTL; p.prio = m.prio; p.lastHop = NODE_ID;
   uint8_t tl = strlen(m.text), ll = strlen(m.landmark);
   p.payload[0] = m.cat;
-  p.payload[1] = tl;
-  memcpy(p.payload + 2, m.text, tl);
-  memcpy(p.payload + 2 + tl, m.landmark, ll);
-  p.len = 2 + tl + ll;
+  p.payload[1] = (uint8_t)m.phoneRssi;
+  p.payload[2] = tl;
+  memcpy(p.payload + 3, m.text, tl);
+  memcpy(p.payload + 3 + tl, m.landmark, ll);
+  p.len = 3 + tl + ll;
+  return p;
+}
+
+void sendOwn(Msg &m) {
+  Packet p = dataPacket(m, ++m.tries);
   if (m.tries > 1) stats.retries++;
   m.state = S_TRANSMITTING;
   transmit(p);  // a TX-done is not a delivery: only the HQ's ACK moves this on to DELIVERED
@@ -310,6 +344,8 @@ void pumpTx() {
 }
 
 // ---------------------------------------------------------------- receiving
+void fillTicket(JsonObject o, const Ticket &t);  // in the web API section
+
 void storeTicket(const Packet &p, float rssi, float snr) {
   for (const Ticket &t : inbox)  // a retry of a message already in the inbox: ACK it again, store nothing
     if (t.used && t.origin == p.origin && t.id == p.id) return;
@@ -321,21 +357,35 @@ void storeTicket(const Packet &p, float rssi, float snr) {
       if (!slot || (t.acked && !slot->acked) ||
           (t.acked == slot->acked && (int32_t)(t.arrivedMs - slot->arrivedMs) < 0))
         slot = &t;
-  uint8_t tl = p.payload[1];
+  uint8_t tl = p.payload[2];
   *slot = {};
   slot->used = true;
   slot->origin = p.origin;
   slot->prio = p.prio;
   slot->cat = p.payload[0] < CAT_COUNT ? p.payload[0] : CAT_OTHER;
+  slot->phoneRssi = (int8_t)p.payload[1];
   slot->via = p.lastHop;
   slot->id = p.id;
   slot->arrivedMs = millis();
   slot->rssi = rssi;
   slot->snr = snr;
-  memcpy(slot->text, p.payload + 2, tl);
-  memcpy(slot->landmark, p.payload + 2 + tl, p.len - 2 - tl);
+  memcpy(slot->text, p.payload + 3, tl);
+  memcpy(slot->landmark, p.payload + 3 + tl, p.len - 3 - tl);
   logf("INBOX #%lu from %c %s \"%s\"", (unsigned long)p.id, nodeChar(p.origin), p.prio == P_SOS ? "SOS" : "normal",
        slot->text);
+  // For tools/control_room.py on the USB port: one JSON line, with where the sending node stands.
+  JsonDocument doc;
+  fillTicket(doc.to<JsonObject>(), *slot);
+  const Peer &from = peers[p.origin];
+  int32_t la = p.origin == NODE_ID ? posLatE6 : from.known ? from.latE6 : NO_POS;
+  int32_t lo = p.origin == NODE_ID ? posLonE6 : from.known ? from.lonE6 : NO_POS;
+  if (la != NO_POS && lo != NO_POS) {
+    doc["lat"] = la / 1e6;
+    doc["lon"] = lo / 1e6;
+  }
+  Serial.print("@MSG ");
+  serializeJson(doc, Serial);
+  Serial.println();
 }
 
 void markDelivered(const Packet &p, float rssi) {
@@ -351,6 +401,21 @@ void markDelivered(const Packet &p, float rssi) {
       logf("DELIVERED #%lu: ACK from %c in %lu ms on try %u", (unsigned long)m.id, nodeChar(p.origin),
            (unsigned long)(m.doneMs - m.createdMs), m.tries);
     }
+}
+
+// Every node takes messages from phones. On the HQ there is nothing to send: it goes straight into the inbox.
+Msg *newMessage(uint8_t prio, uint8_t cat, const char *text, const char *landmark, int8_t phoneRssi) {
+  Msg *m = queueMessage(prio, cat, text, landmark, phoneRssi);
+  if (!m || NODE_ID != HQ_ID) return m;
+  m->tries = 1;
+  storeTicket(dataPacket(*m, 1), NAN, NAN);
+  m->state = S_DELIVERED;
+  m->doneMs = millis();
+  m->ackVia = NODE_ID;
+  stats.delivered++;
+  lastDeliveredMs = m->doneMs | 1;
+  logf("DELIVERED #%lu: sent through the HQ itself", (unsigned long)m->id);
+  return m;
 }
 
 void noteHeartbeat(const Packet &p, float rssi, float snr) {
@@ -387,7 +452,7 @@ void handlePacket(Packet &p, float rssi, float snr) {
   } else if (p.dest == NODE_ID) {
     if (p.type == T_ACK) {
       markDelivered(p, rssi);
-    } else if (p.len < 2 || 2 + p.payload[1] > p.len) {
+    } else if (p.len < 3 || 3 + p.payload[2] > p.len) {
       stats.badPackets++;
     } else {
       storeTicket(p, rssi, snr);
@@ -432,12 +497,11 @@ void pollRadio() {
 void heartbeatTick() {
   if ((int32_t)(millis() - nextHbMs) < 0) return;
   nextHbMs = millis() + HB_INTERVAL_S * 1000UL + random(0, 2000);
-  bool hasPos = NODE_LAT != 0.0 || NODE_LON != 0.0;
   Packet p = {};
   p.type = T_HB; p.origin = NODE_ID; p.dest = BROADCAST; p.id = ++hbSeq; p.ttl = 2; p.len = 12;
   put32(p.payload, millis() / 1000);
-  put32(p.payload + 4, hasPos ? (uint32_t)(int32_t)lround(NODE_LAT * 1e6) : (uint32_t)NO_POS);
-  put32(p.payload + 8, hasPos ? (uint32_t)(int32_t)lround(NODE_LON * 1e6) : (uint32_t)NO_POS);
+  put32(p.payload + 4, (uint32_t)posLatE6);
+  put32(p.payload + 8, (uint32_t)posLonE6);
   enqueue(p, 0);
 }
 
@@ -454,10 +518,6 @@ void pollButton() {
   if (!downAt) downAt = now | 1;
   if (fired || now - downAt < 300) return;  // hold for 0.3 s: debounce, and a knock on the box is not an SOS
   fired = true;
-  if (NODE_ID == HQ_ID) {
-    logf("BUTTON ignored: this node is the HQ");
-    return;
-  }
   if (lastSos && now - lastSos < 5000) {
     logf("BUTTON ignored: an SOS was sent less than 5 s ago");
     return;
@@ -465,7 +525,7 @@ void pollButton() {
   lastSos = now | 1;
   char where[8];
   snprintf(where, sizeof(where), "Node %c", nodeChar(NODE_ID));
-  if (!queueMessage(P_SOS, CAT_OTHER, "SOS button pressed", where)) logf("BUTTON: queue full, SOS not queued");
+  if (!newMessage(P_SOS, CAT_OTHER, "SOS button pressed", where, 0)) logf("BUTTON: queue full, SOS not queued");
 }
 
 // LED: fast blink = own message waiting for its ACK; 3 s solid = delivered; short flick = packet received.
@@ -485,7 +545,7 @@ void updateLed() {
     if (waiting) on = (now / 100) % 2;
     else if (lastDeliveredMs && now - lastDeliveredMs < 3000) on = true;
   }
-  digitalWrite(PIN_LED, on);
+  digitalWrite(PIN_LED, on ? LED_ON : !LED_ON);
 }
 
 // ---------------------------------------------------------------- web API
@@ -527,20 +587,36 @@ void fillTicket(JsonObject o, const Ticket &t) {
   o["via"] = nodeName(t.via);
   o["rssi"] = t.rssi;
   o["snr"] = t.snr;
+  if (t.phoneRssi) o["phone_rssi"] = t.phoneRssi;  // the sender's phone as heard by its gateway's Wi-Fi
   o["acknowledged"] = t.acked;
 }
 
+// Signal strength of the phone at this IP address, as this node's hotspot hears it; 0 if not found.
+#if defined(ESP8266)
+int8_t phoneRssi(IPAddress) { return 0; }  // the ESP8266 cannot tell its hotspot's phones apart by signal
+#else
+int8_t phoneRssi(IPAddress ip) {
+  wifi_sta_list_t wl;
+  StaIpList nl;
+  if (esp_wifi_ap_get_sta_list(&wl) != ESP_OK || getStaIps(&wl, &nl) != ESP_OK) return 0;
+  for (int i = 0; i < nl.num; i++)
+    if (IPAddress(nl.sta[i].ip.addr) == ip) return wl.sta[i].rssi;
+  return 0;
+}
+#endif
+
 void apiSend() {
-  if (NODE_ID == HQ_ID) return sendError(409, "This node is the HQ: it receives messages, it does not send them");
   JsonDocument in;
   if (deserializeJson(in, server.arg("plain"))) return sendError(400, "The request body must be JSON");
   const char *text = in["text"] | "", *landmark = in["landmark"] | "";
   const char *type = in["type"] | "NORMAL", *category = in["category"] | "other";
-  if (strlen(text) + strlen(landmark) > TEXT_ROOM) return sendError(400, "Message plus landmark must fit in 38 bytes");
+  if (strlen(text) + strlen(landmark) > TEXT_ROOM)
+    return sendError(400, ("Message plus landmark must fit in " + String(TEXT_ROOM) + " bytes").c_str());
   uint8_t cat = CAT_OTHER;
   for (uint8_t i = 0; i < CAT_COUNT; i++)
     if (!strcasecmp(category, CATEGORY[i])) cat = i;
-  Msg *m = queueMessage(!strcasecmp(type, "SOS") ? P_SOS : P_NORMAL, cat, text, landmark);
+  Msg *m = newMessage(!strcasecmp(type, "SOS") ? P_SOS : P_NORMAL, cat, text, landmark,
+                        phoneRssi(server.client().remoteIP()));
   if (!m) return sendError(429, "The queue is full: wait for earlier messages to finish");
   JsonDocument out;
   out["message_id"] = m->id;
@@ -640,17 +716,17 @@ void apiStatus() {
   sendJson(200, doc);
 }
 
-// Shape agreed with tools/monitor.py.
-void apiNodes() {
-  JsonDocument doc;
+// Shape agreed with tools/monitor.py and tools/control_room.py.
+void nodesJson(JsonDocument &doc) {
   JsonObject self = doc["self"].to<JsonObject>();
   self["name"] = nodeName(NODE_ID);
   self["uptime_s"] = millis() / 1000;
   self["wifi_clients"] = HAS_WIFI ? WiFi.softAPgetStationNum() : 0;
-  if (NODE_LAT != 0.0 || NODE_LON != 0.0) {
-    self["lat"] = NODE_LAT;
-    self["lon"] = NODE_LON;
+  if (posLatE6 != NO_POS) {
+    self["lat"] = posLatE6 / 1e6;
+    self["lon"] = posLonE6 / 1e6;
   }
+  self["pos_src"] = posSource;
   doc["hb_interval_s"] = HB_INTERVAL_S;
   JsonArray nodes = doc["nodes"].to<JsonArray>();
   for (uint8_t id = 1; id <= MAX_NODES; id++) {
@@ -670,7 +746,126 @@ void apiNodes() {
       n["lon"] = p.lonE6 / 1e6;
     }
   }
+}
+
+void apiNodes() {
+  JsonDocument doc;
+  nodesJson(doc);
   sendJson(200, doc);
+}
+
+// ---------------------------------------------------------------- position, USB commands, USB status
+// "28.749912 77.116403" -> millionths of a degree. False unless both are numbers in range and not 0, 0.
+bool parsePos(const char *s, int32_t &lat, int32_t &lon) {
+  char *end;
+  double la = strtod(s, &end);
+  if (end == s) return false;
+  const char *rest = end;
+  double lo = strtod(rest, &end);
+  if (end == rest || fabs(la) > 90 || fabs(lo) > 180 || (la == 0 && lo == 0)) return false;
+  while (*end == ' ' || *end == '\r') end++;
+  if (*end) return false;
+  lat = lround(la * 1e6);
+  lon = lround(lo * 1e6);
+  return true;
+}
+
+// Where the typed position is kept, and the hardware random numbers: the two boards do these differently.
+#if defined(ESP8266)
+const uint32_t POS_MAGIC = 0x424E5031;  // "BNP1": marks the 12 bytes of emulated EEPROM as a saved position
+void storeBegin() { EEPROM.begin(12); }
+bool storedPos(int32_t &la, int32_t &lo) {
+  uint32_t magic;
+  EEPROM.get(0, magic);
+  EEPROM.get(4, la);
+  EEPROM.get(8, lo);
+  return magic == POS_MAGIC;
+}
+void storePos(int32_t la, int32_t lo) {
+  EEPROM.put(0, POS_MAGIC);
+  EEPROM.put(4, la);
+  EEPROM.put(8, lo);
+  EEPROM.commit();
+}
+void forgetPos() {
+  EEPROM.put(0, (uint32_t)0);
+  EEPROM.commit();
+}
+uint32_t hwRandom() { return ESP.random(); }
+#else
+Preferences prefs;
+void storeBegin() { prefs.begin("blackout"); }
+bool storedPos(int32_t &la, int32_t &lo) {
+  if (!prefs.isKey("lat")) return false;
+  la = prefs.getInt("lat");
+  lo = prefs.getInt("lon");
+  return true;
+}
+void storePos(int32_t la, int32_t lo) {
+  prefs.putInt("lat", la);
+  prefs.putInt("lon", lo);
+}
+void forgetPos() {
+  prefs.remove("lat");
+  prefs.remove("lon");
+}
+uint32_t hwRandom() { return esp_random(); }
+#endif
+
+void loadPosition() {  // the position saved over USB, else the one in platformio.ini
+  int32_t la, lo;
+  if (storedPos(la, lo)) {
+    posLatE6 = la;
+    posLonE6 = lo;
+    posSource = "saved";
+  } else if (NODE_LAT != 0.0 || NODE_LON != 0.0) {
+    posLatE6 = lround(NODE_LAT * 1e6);
+    posLonE6 = lround(NODE_LON * 1e6);
+    posSource = "build";
+  } else {
+    posLatE6 = posLonE6 = NO_POS;
+    posSource = "none";
+  }
+}
+
+// Typed on the serial monitor (115200 baud, newline):  pos 28.749912 77.116403   or   pos clear
+void serialTick() {
+  static char line[64];
+  static uint8_t len = 0;
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c != '\n') {
+      if (len < sizeof(line) - 1) line[len++] = c;
+      continue;
+    }
+    line[len] = 0;
+    len = 0;
+    int32_t la, lo;
+    if (!strncmp(line, "pos clear", 9)) {
+      forgetPos();
+      loadPosition();
+      logf("POSITION cleared, now %s", posSource);
+    } else if (!strncmp(line, "pos ", 4) && parsePos(line + 4, la, lo)) {
+      storePos(la, lo);
+      loadPosition();
+      logf("POSITION saved: %.6f, %.6f", la / 1e6, lo / 1e6);
+    } else if (line[0] && line[0] != '\r') {
+      logf("USB command not understood. Use: pos <latitude> <longitude>   or   pos clear");
+    }
+  }
+}
+
+// Every node prints its node table on USB every few seconds, so tools/control_room.py works plugged into
+// any of them (node C in the field, any node while testing). Messages (@MSG) come from the HQ only.
+void statusTick() {
+  static uint32_t next = 0;
+  if ((int32_t)(millis() - next) < 0) return;
+  next = millis() + USB_STATUS_MS;
+  JsonDocument doc;
+  nodesJson(doc);
+  Serial.print("@NODES ");
+  serializeJson(doc, Serial);
+  Serial.println();
 }
 
 void apiMode() {  // POST /api/mode?priority=0|1, for the priority-versus-FIFO test
@@ -695,6 +890,9 @@ void apiLog() {
 void startWifi() {
   char ssid[16];
   snprintf(ssid, sizeof(ssid), "BLACKOUT_%c", nodeChar(NODE_ID));
+#if defined(ESP8266)
+  WiFi.persistent(false);  // do not write the hotspot settings to flash on every start
+#endif
   WiFi.mode(WIFI_AP);
   // Open network on purpose: anyone nearby must be able to join. A and C sit on different channels.
   WiFi.softAP(ssid, nullptr, NODE_ID == 1 ? 1 : NODE_ID == HQ_ID ? 6 : 11, 0, 8);
@@ -735,6 +933,11 @@ void selfTest() {
   ok = ok && !seenBefore(a) && seenBefore(a);
   a.attempt = 3;
   ok = ok && !seenBefore(a);               // a retry must pass the duplicate filter
+  int32_t la, lo;
+  ok = ok && parsePos("28.749912 77.116403", la, lo) && la == 28749912 && lo == 77116403;
+  ok = ok && parsePos("-33.5 -70.25\r", la, lo) && la == -33500000 && lo == -70250000;
+  ok = ok && !parsePos("91 10", la, lo) && !parsePos("0 0", la, lo) && !parsePos("28.7", la, lo) &&
+       !parsePos("28.7 77.1 x", la, lo);
   memset(seen, 0, sizeof(seen));
   seenAt = 0;
   Serial.println(ok ? "selftest ok" : "SELFTEST FAILED: do not trust this build");
@@ -746,13 +949,21 @@ void setup() {
   Serial.println();
   pinMode(PIN_BUTTON, INPUT_PULLUP);
   pinMode(PIN_LED, OUTPUT);
+  storeBegin();
+  loadPosition();
   selfTest();
-  randomSeed(esp_random());
-  nextId = esp_random();  // random start: a reboot must not reuse ids the relay still remembers
+  randomSeed(hwRandom());
+  nextId = hwRandom();  // random start: a reboot must not reuse ids the relay still remembers
   logf("BLACKOUT NET node %c (id %d)%s", nodeChar(NODE_ID), NODE_ID, NODE_ID == HQ_ID ? ", HQ" : "");
   if (BENCH_BLOCK_DIRECT) logf("BENCH TEST MODE: A and C ignore each other's direct packets");
+  if (posLatE6 == NO_POS) logf("POSITION none yet: type  pos <latitude> <longitude>  in the serial monitor");
+  else logf("POSITION %.6f, %.6f (%s)", posLatE6 / 1e6, posLonE6 / 1e6, posSource);
 
+#if defined(ESP8266)
+  SPI.begin();  // fixed pins: D5 SCK, D6 MISO, D7 MOSI
+#else
   SPI.begin(PIN_SCK, PIN_MISO, PIN_MOSI, PIN_NSS);
+#endif
   radioError = radio.begin(LORA_FREQ_MHZ, LORA_BW_KHZ, LORA_SF, LORA_CR, LORA_SYNC, LORA_TX_DBM, LORA_PREAMBLE, 0);
   if (radioError == RADIOLIB_ERR_NONE) radioError = radio.setCRC(true);
   radioOk = radioError == RADIOLIB_ERR_NONE;
@@ -782,4 +993,6 @@ void loop() {
   }
   pollButton();
   updateLed();
+  serialTick();
+  statusTick();
 }

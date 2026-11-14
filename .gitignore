@@ -2,3 +2,6 @@ __pycache__/
 heartbeats.csv
 .pio/
 .vscode/
+messages.jsonl
+city_plan.html
+arduino/

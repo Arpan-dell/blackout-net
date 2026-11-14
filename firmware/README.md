@@ -7,8 +7,8 @@ DELIVERED only after node C's acknowledgement has travelled back.
 | Node | Role | Wi-Fi hotspot | Page at http://192.168.4.1 |
 |---|---|---|---|
 | A | sender gateway | `BLACKOUT_A` | Send form, message status |
-| B | relay | none | none (serial log only) |
-| C | HQ | `BLACKOUT_C` | Inbox, Acknowledge button |
+| B | relay, also takes messages | `BLACKOUT_B` | Send form, message status |
+| C | HQ, also takes messages | `BLACKOUT_C` | Inbox, Acknowledge button, send form |
 
 Every node also has a Network tab with counters, the other nodes heard and the radio log.
 
@@ -27,6 +27,27 @@ Every node also has a Network tab with counters, the other nodes heard and the r
    If the upload stalls at "Connecting...", hold the BOOT button on the board until it starts.
 4. Label each box A, B or C straight away.
 
+### Or with the Arduino IDE
+
+1. Make one sketch per node: `python tools/make_arduino_sketch.py` (add `--phase 2` for phase 2). This
+   writes `arduino/blackout_node_A`, `_B` and `_C`, each with its node already set. Run it again after any
+   change to the firmware.
+2. Arduino IDE, once: Boards Manager → **esp32** by Espressif (2.0.17 or 3.x both build); Library Manager →
+   **RadioLib 6.6.0** (not 7 or 8) and **ArduinoJson 7.2.1**.
+3. File → Open → `arduino/blackout_node_A/blackout_node_A.ino`. Tools → Board → **ESP32 Dev Module** for an
+   ESP32 DevKit, or **NodeMCU 1.0 (ESP-12E Module)** for a NodeMCU (ESP8266). Tools → Port → the board's COM
+   port. Press **Upload** (→). Repeat with `_B` and `_C` on their boards.
+4. Tools → Serial Monitor at **115200** baud shows `selftest ok`; type `pos <lat> <lon>` there to set the
+   position.
+
+If the IDE runs out of memory while compiling, `tools\upload_node.bat B COM8 8266` compiles and uploads with
+one compiler at a time (leave off `8266` for an ESP32).
+
+**Two boards work, and can be mixed:** an ESP32 DevKit (wiring above) or a NodeMCU ESP8266 (SCK D5, MISO D6,
+MOSI D7, NSS D8, RESET D0, DIO0 D2, DIO1 D1, SOS button D3 to GND, LED from 3V3 through 220 Ω to D4). The
+pins switch by themselves when you pick the board. On a NodeMCU the hotspot cannot measure the sender's
+phone signal, so use an ESP32 for node A, the gateway phones join; B and C can be either.
+
 Settings live in `include/config.h` (pins, radio, timing) and `platformio.ini` (node identity and
 position). All nodes must be built from the same `config.h`, or they will not hear each other.
 
@@ -42,6 +63,25 @@ selftest ok
 
 Power a second node. Within a few seconds each one logs `NEW NODE B heard via B`. That is the
 two-node ping test: both radios, both antennas and the settings are working.
+
+## Position (for the map and for finding the sender)
+
+- Type its latitude and longitude into the serial monitor (115200 baud, line ending "New Line"), for
+  example `pos 28.749912 77.116403`. It is kept through restarts. `pos clear` removes it.
+- Otherwise `NODE_LAT` / `NODE_LON` in `platformio.ini` (or in the Arduino sketch's `config.h`) are used.
+- Nodes riding on drones need neither: the control room shows them at their drone's GPS position.
+
+The node's start-up log says which one it is using.
+
+## Control room (node C on USB)
+
+Node C prints two extra kinds of line for `tools/control_room.py`: `@NODES {…}` every 5 seconds (the same
+JSON as `/api/nodes`) and `@MSG {…}` for every message that reaches the inbox, with the sending node's
+position and the sender's phone signal. Either plug node C into the control room laptop
+(`python ../tools/control_room.py --serial COM5`), or into the gimbal drone's companion computer running
+`../tools/hq_forward.py`. See plan.md, sections 4c and 5.8.
+
+Protocol version: phase 1 is version 3, phase 2 is version 4. Flash all three nodes from the same folder.
 
 ## Button and LED
 
@@ -110,6 +150,6 @@ To get distances on its map, set `NODE_LAT` and `NODE_LON` for each node in `pla
 - Messages and the inbox are kept in memory only. A node that loses power forgets them.
 - Transmit power is set to 8 dBm at the module. Nobody has measured the radiated power, so this is not a
   claim of compliance with the Indian 433 MHz rules.
-- Message text and landmark share 38 bytes. Hindi and other non-Latin text uses about 3 bytes a character.
+- Message text and landmark share 37 bytes. Hindi and other non-Latin text uses about 3 bytes a character.
 - Packets are not encrypted or signed. Anyone with a matching radio can read or forge them.
 - The hotspot is open and takes up to 8 phones at a time.

@@ -34,7 +34,7 @@ fieldset { border: 0; padding: 0; margin: 0; }
 .choices label:has(input:checked) { border: 2px solid var(--ink); font-weight: 600; }
 input[type=text] { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--page); min-height: 44px; }
 .hint { color: var(--ink2); font-size: 13px; }
-#send { width: 100%; margin-top: 14px; background: var(--crit); border-color: var(--crit); color: #fff; font-weight: 700; font-size: 18px; }
+#send, #sos-now { width: 100%; margin-top: 14px; background: var(--crit); border-color: var(--crit); color: #fff; font-weight: 700; font-size: 18px; }
 #say { font-weight: 600; margin-top: 10px; min-height: 1.45em; }
 ul { list-style: none; margin: 0; padding: 0; }
 li.item { border-top: 1px solid var(--line); padding: 10px 0; }
@@ -62,6 +62,11 @@ pre { font-size: 12px; overflow: auto; max-height: 320px; margin: 0; white-space
   </nav>
 
   <section id="view-send" hidden>
+    <div class="card">
+      <button id="sos-now" type="button">SOS: send now</button>
+      <p class="hint">One tap sends an SOS with this node's location. Add details below if you can.</p>
+      <div id="say-sos" role="status"></div>
+    </div>
     <form class="card" id="form">
       <h2>Ask the local coordinators for help</h2>
       <p class="hint">This reaches the coordinators at the HQ node. It does not call the emergency services.</p>
@@ -70,10 +75,11 @@ pre { font-size: 12px; overflow: auto; max-height: 320px; margin: 0; white-space
         <label><input type="radio" name="type" value="SOS" checked> SOS, urgent</label>
         <label><input type="radio" name="type" value="NORMAL"> Normal</label>
       </div></fieldset>
-      <label for="text">Short message</label>
+      <label for="text">Short message (optional)</label>
       <input type="text" id="text" name="text" autocomplete="off" placeholder="Example: 2 people, one injured">
-      <label for="landmark">Where are you? (landmark or zone)</label>
+      <label for="landmark">Where are you? (optional: landmark or zone)</label>
       <input type="text" id="landmark" name="landmark" autocomplete="off" placeholder="Example: Hostel B gate">
+      <p class="hint">The HQ sees where this node stands and roughly how far your phone is from it. A landmark helps the team find you.</p>
       <div class="hint" id="count"></div>
       <button id="send" type="submit">Send</button>
       <div id="say" role="status"></div>
@@ -141,21 +147,30 @@ function count() {
 }
 $("text").oninput = $("landmark").oninput = count;
 
-$("form").onsubmit = async e => {
-  e.preventDefault();
-  const f = new FormData(e.target), type = f.get("type");
-  if (!count()) return $("say").textContent = "Too long: shorten the message or the landmark.";
-  if (type === "SOS" && !confirm("Send an SOS to the HQ now?")) return;
+async function send(body, say) {
   try {
-    const r = await api("/api/send", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ destination: "HQ", type, category: f.get("category"), text: f.get("text").trim(), landmark: f.get("landmark").trim() }) });
+    const r = await api("/api/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     mine.push(r.message_id);
     try { localStorage.setItem("mine", JSON.stringify(mine.slice(-40))); } catch (e) {}
-    $("text").value = "";
-    count();
-    $("say").textContent = "Queued. It is delivered only when the status below says DELIVERED.";
+    say.textContent = "Queued. It is delivered only when the status below says DELIVERED.";
     poll();
-  } catch (err) { $("say").textContent = "Not sent: " + err.message; }
+    return true;
+  } catch (err) { say.textContent = "Not sent: " + err.message; return false; }
+}
+// No confirm() pop-up: the Wi-Fi sign-in window phones open often blocks pop-ups, which silently stopped the SOS.
+$("sos-now").onclick = async () => {
+  const b = $("sos-now");
+  b.disabled = true;  // one tap is enough; a second tap within 5 s would only queue a duplicate
+  await send({ destination: "HQ", type: "SOS", category: "other", text: "", landmark: "" }, $("say-sos"));
+  setTimeout(() => { b.disabled = false; }, 5000);
+};
+$("form").onsubmit = async e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  if (!count()) return $("say").textContent = "Too long: shorten the message or the landmark.";
+  const body = { destination: "HQ", type: f.get("type"), category: f.get("category"),
+                 text: f.get("text").trim(), landmark: f.get("landmark").trim() };
+  if (await send(body, $("say"))) { $("text").value = ""; count(); }
 };
 
 function statusOf(m) {
@@ -223,9 +238,9 @@ async function poll() {
     room = st.text_room_bytes;
     const isHq = st.role === "hq";
     $("who").textContent = "· Node " + st.node + (isHq ? " (HQ)" : "");
-    $("tab-send").hidden = isHq;
+    $("tab-send").hidden = false;  // phones can send through any node, the HQ too
     $("tab-inbox").hidden = !isHq;
-    if (!tab) { show(isHq ? "inbox" : "send"); count(); }
+    if (!tab) { show("send"); count(); }
     const msgs = await api("/api/messages");
     drawMine(msgs.outbox);
     drawTickets(msgs.inbox);

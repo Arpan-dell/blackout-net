@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BLACKOUT NET control room</title>
+<link rel="stylesheet" href="/vendor/leaflet.css">
+<style>
+:root {
+  color-scheme: light dark;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,.10);
+  --series: #2a78d6; --good: #0ca30c; --warn: #fab219; --crit: #d03b3b; --scout: #7b4fd6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10); --series: #3987e5; --scout: #9b78ec;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.wrap { max-width: 1600px; margin: 0 auto; padding: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; }
+h1 { font-size: 20px; margin: 0; letter-spacing: .04em; }
+h1 span { color: var(--ink2); font-weight: 400; letter-spacing: 0; }
+h2 { font-size: 14px; margin: 0; color: var(--ink2); font-weight: 600; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
+.spacer { flex: 1; }
+button { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 8px; padding: 6px 12px; cursor: pointer; min-height: 36px; }
+button:hover { border-color: var(--ink2); }
+button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+button.primary { background: var(--crit); border-color: var(--crit); color: #fff; font-weight: 600; }
+button:disabled { opacity: .5; cursor: default; }
+:focus-visible { outline: 2px solid var(--series); outline-offset: 2px; }
+.good { color: var(--good); } .warn { color: var(--warn); } .crit { color: var(--crit); } .muted { color: var(--muted); }
+#alert { display: none; margin-bottom: 14px; padding: 12px 16px; border-radius: 10px; border: 2px solid var(--crit); background: color-mix(in srgb, var(--crit) 12%, var(--surface)); font-weight: 600; }
+#alert.show { display: block; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; min-width: 0; }
+.head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; margin-bottom: 14px; align-items: start; }
+@media (max-width: 1000px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.stack { display: grid; gap: 14px; }
+#map { height: 520px; border-radius: 8px; background: var(--grid); }
+.caption { color: var(--ink2); font-size: 12px; margin-top: 6px; }
+.video { position: relative; background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 16 / 9; }
+.video img { width: 100%; height: 100%; object-fit: contain; display: block; }
+#video-note { position: absolute; inset: 0; display: none; place-items: center; text-align: center; padding: 20px; color: #ddd; font-size: 14px; }
+#video-note.show { display: grid; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px 12px; margin: 12px 0 0; }
+.facts dt { color: var(--ink2); font-size: 12px; }
+.facts dd { margin: 0; font-weight: 600; }
+#msgs { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; max-height: 620px; overflow: auto; }
+.msg { border: 1px solid var(--border); border-left: 6px solid var(--axis); border-radius: 10px; padding: 10px 12px; }
+.msg.sos { border-left-color: var(--crit); }
+.msg.done { opacity: .6; }
+.msg .top { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: 13px; color: var(--ink2); }
+.badge { font-weight: 700; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--axis); color: var(--ink); }
+.sos .badge { background: var(--crit); color: #fff; }
+.msg .text { font-size: 18px; font-weight: 600; margin: 4px 0; overflow-wrap: anywhere; }
+.msg .where { font-size: 13px; color: var(--ink2); }
+.msg .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; color: var(--ink2); font-weight: 600; padding: 4px 6px; border-bottom: 1px solid var(--axis); }
+td { padding: 6px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+#log { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow: auto; }
+#log li { display: grid; grid-template-columns: 62px 18px 1fr; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--grid); font-size: 13px; }
+#log time { color: var(--ink2); font-variant-numeric: tabular-nums; }
+.pin { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 15px;
+       background: var(--surface); color: var(--ink); border: 3px solid var(--good); box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+.pin.OFFLINE { border-color: var(--crit); border-style: dashed; } .pin.UNKNOWN { border-color: var(--muted); border-style: dashed; }
+.pin.hq { border-radius: 8px; }
+.pin.scout { background: var(--scout); color: #fff; border-color: #fff; font-size: 13px; width: 38px; }
+.pin.relay { background: var(--series); color: #fff; border-color: #fff; font-size: 13px; width: 38px; }
+.pin.plan { background: transparent; color: var(--scout); border: 3px dashed var(--scout); font-size: 12px; width: 38px; border-radius: 8px; box-shadow: none; }
+#plan { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+#plan li { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; display: grid; gap: 4px; }
+#plan .row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+#plan .sub { font-size: 13px; color: var(--ink2); }
+.pin.sos { background: var(--crit); color: #fff; border-color: #fff; font-size: 11px; width: 38px; border-radius: 8px; }
+.pin.sos.done { background: var(--muted); }
+.leaflet-tooltip { font: 12px system-ui, sans-serif; }
+footer { color: var(--ink2); font-size: 12px; margin-top: 10px; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>BLACKOUT NET <span>control room</span></h1>
+    <span class="pill" id="feed"><span class="muted">?</span> Connecting</span>
+    <span class="pill" id="scoutpill"><span class="muted">?</span> Scout</span>
+    <span class="spacer"></span>
+    <button id="sound" aria-pressed="false">Sound alerts: off</button>
+  </header>
+
+  <div id="alert" role="alert"></div>
+
+  <div class="grid">
+    <section class="card">
+      <div class="head"><h2>Map</h2>
+        <span><button id="lay-sat" aria-pressed="true">Satellite</button> <button id="lay-str" aria-pressed="false">Streets</button> <button id="fit">Show all</button></span></div>
+      <div id="map" role="application" aria-label="Map of the nodes, the SOS calls and the scout drone"></div>
+      <div class="caption" id="map-cap">Nodes at their positions (typed in on each node; nodes on drones move with the drone). Red squares are SOS calls; the red circle is where to look for the sender. Purple is the scout drone.</div>
+    </section>
+    <div class="stack">
+      <section class="card">
+        <div class="head"><h2 id="video-title">Live camera</h2><button id="video-retry">Reload video</button></div>
+        <div class="video"><img id="video" alt="Live video from the scout drone's gimbal camera"><div id="video-note"></div></div>
+        <dl class="facts" id="scout-facts"></dl>
+      </section>
+      <section class="card">
+        <div class="head"><h2>Drone plan</h2><span class="caption" id="plan-sum"></span></div>
+        <ul id="plan"></ul>
+        <div class="caption" id="plan-note"></div>
+      </section>
+    </div>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <div class="head"><h2>Messages from the network</h2><span class="caption" id="msg-count"></span></div>
+      <ul id="msgs"></ul>
+    </section>
+    <div class="stack">
+      <section class="card">
+        <div class="head"><h2>Nodes</h2><span class="caption" id="node-count"></span></div>
+        <table><thead><tr><th>Node</th><th>Status</th><th>Last heard</th><th>Route</th><th>Signal</th><th>Position</th></tr></thead>
+          <tbody id="nodes"></tbody></table>
+      </section>
+      <section class="card">
+        <div class="head"><h2>Event log</h2></div>
+        <ul id="log"></ul>
+      </section>
+    </div>
+  </div>
+  <footer id="foot"></footer>
+</div>
+
+<script src="/vendor/leaflet.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const el = (tag, props, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+const STATUS = { ONLINE: ["●", "Online", "good"], OFFLINE: ["✕", "OFFLINE", "crit"], UNKNOWN: ["?", "Unknown", "muted"] };
+const KIND = { hb: ["•", "muted"], lost: ["!", "warn"], offline: ["✕", "crit"], online: ["✓", "good"], restart: ["↻", "warn"],
+               link: ["⇄", "crit"], new: ["+", "good"], sos: ["🆘", "crit"], msg: ["✉", "muted"], scout: ["✈", "good"], handled: ["✓", "good"] };
+const dur = s => { s = Math.max(0, Math.round(s)); return s < 60 ? s + " s" : s < 3600 ? Math.floor(s / 60) + " m " + String(s % 60).padStart(2, "0") + " s" : Math.floor(s / 3600) + " h " + String(Math.floor(s % 3600 / 60)).padStart(2, "0") + " m"; };
+const hasPos = p => p && p.lat != null && p.lon != null;
+const fmtDist = m => m < 1000 ? Math.round(m) + " m" : (m / 1000).toFixed(2) + " km";
+const fmtPos = p => p.lat.toFixed(6) + ", " + p.lon.toFixed(6);
+const POS_SRC = { saved: "typed in over USB", build: "set at build", none: "none" };
+const posSrc = s => POS_SRC[s] ?? s ?? "?";
+function distM(a, b) {
+  const r = Math.PI / 180, dLat = (b.lat - a.lat) * r, dLon = (b.lon - a.lon) * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.sqrt(h));
+}
+console.assert(Math.abs(distM({ lat: 28.75, lon: 77.116 }, { lat: 28.75, lon: 77.118 }) - 195) < 1, "distM self-check failed");
+
+/* ---------- map ---------- */
+const map = L.map("map", { zoomControl: true, attributionControl: true }).setView([28.6139, 77.209], 11);
+let tiles = null, layer = "sat", fitted = false;
+const marks = new Map(), lines = new Map(), circles = new Map();
+// SOS pins sit just above their node and the scout just below its point, so neither hides the node under it.
+const icon = (cls, text) => L.divIcon({ className: "", html: `<div class="pin ${cls}">${text}</div>`, iconSize: [38, 30],
+                                        iconAnchor: cls.startsWith("sos") ? [19, 50] : cls === "scout" || cls === "relay" ? [19, -20] :
+                                                    cls === "plan" ? [19, 15] : [15, 15] });
+function setTiles(st) {
+  if (!st.gcs || tiles?.options.layerName === layer) return;
+  tiles?.remove();
+  tiles = L.tileLayer(`${st.gcs.base}/tiles/${layer === "sat" ? "sat" : "streets"}/{z}/{x}/{y}`,
+                      { maxZoom: 19, layerName: layer, attribution: layer === "sat" ? "Imagery Esri, via the GCS tile cache" : "© OpenStreetMap, via the GCS tile cache" }).addTo(map);
+}
+function put(key, pos, cls, text, tip) {  // create or move one marker
+  let m = marks.get(key);
+  if (!m) { m = L.marker([pos.lat, pos.lon], { keyboard: false }).addTo(map); marks.set(key, m); m.bindTooltip("", { direction: "top", offset: [0, -14] }); }
+  m.setLatLng([pos.lat, pos.lon]).setIcon(icon(cls, text)).setTooltipContent(tip);
+  m.seen = true;
+}
+function line(key, a, b, style) {
+  let l = lines.get(key);
+  if (!l) { l = L.polyline([], style).addTo(map); lines.set(key, l); }
+  l.setLatLngs([[a.lat, a.lon], [b.lat, b.lon]]).setStyle(style);
+  l.seen = true;
+}
+function ring(key, pos, radius, style) {
+  let c = circles.get(key);
+  if (!c) { c = L.circle([pos.lat, pos.lon], { radius, interactive: false }).addTo(map); circles.set(key, c); }
+  c.setLatLng([pos.lat, pos.lon]).setRadius(radius).setStyle(style);
+  c.seen = true;
+}
+function sweep(store) { for (const [k, v] of store) { if (!v.seen) { v.remove(); store.delete(k); } else v.seen = false; } }
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+function drawMap(st) {
+  setTiles(st);
+  const me = st.self, byName = new Map(st.nodes.map(n => [n.name, n]));
+  if (hasPos(me)) put("node:" + me.name, me, "hq " + (st.link ? "ONLINE" : "UNKNOWN"), me.name,
+                      `Node ${me.name}, HQ: this feed. Position: ${posSrc(me.pos_src)}`);
+  for (const n of st.nodes) {
+    if (!hasPos(n)) continue;
+    put("node:" + n.name, n, n.status, n.name, `Node ${n.name}: ${STATUS[n.status][1]}, heard ${dur(n.age_ms / 1000)} ago, ${n.rssi} dBm`);
+    const parent = n.via !== n.name && byName.has(n.via) ? byName.get(n.via) : me;
+    if (hasPos(parent)) line("link:" + n.name, n, parent, { color: n.status === "OFFLINE" ? css("--crit") : css("--series"), weight: 3, opacity: .8, dashArray: n.status === "ONLINE" ? null : "6 6" });
+  }
+  for (const m of st.messages) {
+    if (!hasPos(m)) continue;
+    const done = !!m.handled;
+    if (m.sos || !done) {
+      put("msg:" + m.key, m, "sos" + (done ? " done" : ""), m.sos ? "SOS" : "MSG", `#${m.id}: ${m.text}`);
+      ring("msg:" + m.key, m, m.radius_m, { color: done ? css("--muted") : css("--crit"), weight: 2, fillOpacity: .12 });
+    }
+  }
+  // The plan: where relay drones should hover (with the ground each covers) and the links they make.
+  const plan = st.plan;
+  plan.links.forEach(([a, b], i) => line("plan-link:" + i, { lat: a[0], lon: a[1] }, { lat: b[0], lon: b[1] },
+                                         { color: css("--scout"), weight: 2, opacity: .7, dashArray: "2 7" }));
+  for (const r of plan.relays) {
+    put("plan:" + r.n, r, "plan", "R" + r.n, `Hover point R${r.n}: ${r.drone ? `${r.drone} with node ${r.node}` : "no drone for it"}, ${r.alt} m`);
+    ring("plan:" + r.n, r, plan.range_m, { color: css("--scout"), weight: 1, opacity: .5, fillOpacity: .03, dashArray: "4 6" });
+  }
+  for (const [id, d] of Object.entries(st.drones || {})) {
+    if (id === st.gcs?.scout || !hasPos(d)) continue;
+    const spot = plan.relays.find(r => r.drone === id);
+    put("drone:" + id, d, "relay", "✈", `Relay drone ${id}: ${d.mode ?? "?"}, ${d.alt_m?.toFixed?.(0) ?? "?"} m`);
+    if (spot && spot.off_m > 30) line("to-plan:" + id, d, spot, { color: css("--series"), weight: 2, dashArray: "8 6" });
+  }
+  const sc = st.scout;
+  if (sc && hasPos(sc)) {
+    put("scout", sc, "scout", "✈", `Scout ${sc.id}: ${sc.mode ?? "?"}, ${sc.alt_m?.toFixed?.(0) ?? "?"} m, battery ${sc.battery_pct ?? "?"} %`);
+    const target = st.messages.find(m => m.scout_sent && !m.handled && hasPos(m));
+    if (target) line("scout-target", sc, target, { color: css("--scout"), weight: 3, dashArray: "8 6" });
+  }
+  sweep(marks); sweep(lines); sweep(circles);
+  if (!fitted && marks.size >= 2) { fitAll(); fitted = true; }
+}
+function fitAll() {
+  const pts = [...marks.values()].map(m => m.getLatLng());
+  if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.25), { maxZoom: 17, animate: false });
+}
+
+/* ---------- video and scout ---------- */
+let videoSrc = "";
+function drawScout(st) {
+  const g = st.gcs, sc = st.scout;
+  const pill = !g ? [el("span", { className: "muted" }, "–"), " No GCS: start with --gcs"]
+             : sc ? [el("span", { className: sc.connected ? "good" : "crit" }, sc.connected ? "●" : "✕"), ` Scout ${sc.id} ${sc.connected ? (sc.armed ? "armed, " : "on ground, ") + (sc.mode ?? "") : "not connected"}`]
+             : [el("span", { className: "crit" }, "✕"), " GCS not answering"];
+  $("scoutpill").replaceChildren(...pill);
+  if (g) {
+    $("video-title").textContent = `Live camera · ${g.scout}`;
+    const src = `${g.base}/video/${g.scout}.mjpg`;
+    if (videoSrc !== src) { videoSrc = src; $("video").src = src; }
+  } else showVideoNote("No video: start the control room with --gcs http://localhost:8765");
+  const target = st.messages.find(m => m.scout_sent && !m.handled && hasPos(m));
+  const facts = sc ? [["Mode", sc.mode ?? "–"], ["Height", sc.alt_m == null ? "–" : sc.alt_m.toFixed(0) + " m"], ["Battery", sc.battery_pct == null ? "–" : sc.battery_pct + " %"],
+                      ["Position", hasPos(sc) ? fmtPos(sc) : "no GPS fix"],
+                      ["To target", target && hasPos(sc) ? fmtDist(distM(sc, target)) + ` (#${target.id})` : "no target"]]
+                   : [["Scout", st.scout_error || "no GCS"]];
+  $("scout-facts").replaceChildren(...facts.map(([k, v]) => el("div", {}, el("dt", {}, k), el("dd", {}, v))));
+}
+function showVideoNote(text) { $("video-note").textContent = text; $("video-note").classList.add("show"); }
+$("video").onerror = () => showVideoNote("No video from the GCS. Is it running, and is the scout's camera streaming? Retrying every 5 s.");
+$("video").onload = () => $("video-note").classList.remove("show");
+setInterval(() => { if ($("video-note").classList.contains("show") && videoSrc) $("video").src = videoSrc + "?t=" + Date.now(); }, 5000);
+$("video-retry").onclick = () => { if (videoSrc) $("video").src = videoSrc + "?t=" + Date.now(); };
+
+/* ---------- messages ---------- */
+let drawnMsgs = "";
+async function post(path, key) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }) });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) alert(body.error || JSON.stringify(body));
+  tick(true);
+}
+function drawMessages(st) {
+  const key = JSON.stringify([st.messages.map(m => [m.key, m.handled, m.scout_sent]), !!st.gcs, st.scout && hasPos(st.scout)]);
+  const open = st.messages.filter(m => !m.handled);
+  $("msg-count").textContent = `${open.filter(m => m.sos).length} SOS and ${open.filter(m => !m.sos).length} other waiting · ${st.messages.length} in all`;
+  if (key === drawnMsgs) return;
+  drawnMsgs = key;
+  // Open SOS first, then open messages, then handled ones; newest first within each.
+  const rank = m => (m.handled ? 2 : m.sos ? 0 : 1);
+  const list = [...st.messages].sort((a, b) => rank(a) - rank(b) || (a.received_at < b.received_at ? 1 : -1));
+  $("msgs").replaceChildren(...list.map(m => {
+    const near = m.phone_rssi ? `within about ${m.radius_m} m of node ${m.node} (phone signal ${m.phone_rssi} dBm there, a rough guide)`
+                              : `near node ${m.node}, within its Wi-Fi reach (about ${m.radius_m} m)`;
+    const where = hasPos(m) ? `${fmtPos(m)} · ${near}` : `node ${m.node} has no position yet: type pos <lat> <lon> on it over USB`;
+    const acts = el("div", { className: "acts" });
+    if (!m.handled) {
+      const go = el("button", { className: m.sos ? "primary" : "", disabled: !st.gcs || !hasPos(m),
+                                textContent: m.scout_sent ? "Send scout again" : "Send scout here" });
+      go.onclick = () => {
+        if (confirm(`Send ${st.gcs.scout} to ${fmtPos(m)}, ${st.gcs.alt} m above its home?\n\nIt must already be flying; the GCS switches it to GUIDED. The pilot can take over at any time.`))
+          post("/api/scout", m.key);
+      };
+      const done = el("button", { textContent: "Mark handled" });
+      done.onclick = () => post("/api/handled", m.key);
+      const center = el("button", { textContent: "Show on map", disabled: !hasPos(m) });
+      center.onclick = () => map.setView([m.lat, m.lon], 17);
+      acts.append(go, center, done);
+    }
+    return el("li", { className: "msg" + (m.sos ? " sos" : "") + (m.handled ? " done" : "") },
+      el("div", { className: "top" }, el("span", { className: "badge" }, m.sos ? "SOS" : m.category.toUpperCase()),
+         `#${m.id} · through node ${m.node} · ${m.received_at.slice(11)}`,
+         m.scout_sent ? el("span", { className: "good" }, ` · scout sent ${m.scout_sent.slice(11)}`) : "",
+         m.handled ? ` · handled ${m.handled.slice(11)}` : ""),
+      el("div", { className: "text" }, m.text || "(no text)"),
+      el("div", { className: "where" }, (m.landmark ? "Landmark: " + m.landmark + " · " : "") + where),
+      acts);
+  }));
+  if (!list.length) $("msgs").append(el("li", { className: "caption" }, "No messages yet. They appear here the moment node C receives them."));
+}
+
+/* ---------- drone plan ---------- */
+let drawnPlan = "";
+async function flyRelay(id) {
+  const r = await fetch("/api/relay", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ drone: id }) });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) alert(body.error || JSON.stringify(body));
+  tick(true);
+}
+function drawPlan(st) {
+  const p = st.plan, sc = p.scout, round10 = v => v == null ? null : Math.round(v / 10) * 10;
+  const key = JSON.stringify([p.relays.map(r => [r.n, r.drone, round10(r.off_m), r.lat.toFixed(5), r.lon.toFixed(5)]),
+                              sc && [sc.key, sc.sent, round10(sc.distance_m), sc.breaks_at_m], p.warnings, p.spare, !!st.gcs]);
+  if (key === drawnPlan) return;
+  drawnPlan = key;
+  const items = [];
+  for (const r of p.relays) {
+    const btn = el("button", { textContent: "Fly to plan", disabled: !r.drone || !st.gcs });
+    btn.onclick = () => confirm(`Send relay ${r.drone} (node ${r.node}) to hover point R${r.n}: ${fmtPos(r)}, ${r.alt} m above its home?\n\nIt must already be flying; the GCS switches it to GUIDED.`) && flyRelay(r.drone);
+    const state = !r.drone ? el("span", { className: "crit" }, "No relay drone for this point")
+                : r.off_m == null ? el("span", { className: "muted" }, `${r.drone}: no position from the GCS`)
+                : r.off_m <= 30 ? el("span", { className: "good" }, `● ${r.drone} on station`)
+                : el("span", { className: "warn" }, `${r.drone} is ${fmtDist(r.off_m)} from its point`);
+    items.push(el("li", {}, el("div", { className: "row" }, el("strong", {}, `R${r.n} · relay${r.drone ? ` ${r.drone} with node ${r.node}` : ""}`), btn),
+      el("div", { className: "sub" }, `Hover at ${fmtPos(r)}, ${r.alt} m · links node ${r.serves} to the HQ`), el("div", { className: "sub" }, state)));
+  }
+  for (const s of p.spare || []) items.push(el("li", {}, el("strong", {}, `${s.drone} with node ${s.node}`),
+    el("div", { className: "sub" }, "Not needed for the current nodes: keep it on standby, or fly it towards a node to strengthen that link.")));
+  if (sc) {
+    const btnText = sc.sent ? "Flying there" : "Send scout here";
+    const route = sc.breaks_at_m == null ? el("span", { className: "good" }, "✓ Node C stays in reach of the mesh the whole way")
+                : el("span", { className: "crit" }, `✕ Node C loses the mesh after about ${fmtDist(sc.breaks_at_m)}: put the relays on station first, or messages wait until it is back`);
+    const go = el("button", { className: "primary", textContent: btnText, disabled: sc.sent || !st.gcs });
+    go.onclick = () => confirm(`Send ${sc.drone} to SOS #${sc.id} at ${fmtPos(sc)}, ${st.gcs.alt} m above its home?\n\nIt must already be flying; the GCS switches it to GUIDED.`) && post("/api/scout", sc.key);
+    items.push(el("li", {}, el("div", { className: "row" }, el("strong", {}, `${sc.drone} · gimbal camera, carries node C (HQ)`), go),
+      el("div", { className: "sub" }, `${sc.sent ? "Flying to" : "Plan for"} SOS #${sc.id}: ${fmtDist(sc.distance_m)}, about ${dur(sc.eta_s)} at the planned speed`),
+      el("div", { className: "sub" }, route)));
+  } else items.push(el("li", {}, el("strong", {}, `${st.gcs?.scout ?? "Scout"} · gimbal camera`), el("div", { className: "sub" }, "No open SOS with a position: it waits at home.")));
+  for (const w of p.warnings) items.push(el("li", { className: "crit" }, "⚠ " + w));
+  $("plan").replaceChildren(...items);
+  const assigned = p.relays.filter(r => r.drone).length;
+  $("plan-sum").textContent = p.relays.length ? `${p.relays.length} relay point${p.relays.length > 1 ? "s" : ""}, ${assigned} with a drone` : "every node reaches the HQ directly";
+  $("plan-note").textContent = `Planned from the HQ at ${hasPos(p.hq) ? fmtPos(p.hq) : "?"} (${p.hq.source ?? "?"}), assuming ${fmtDist(p.range_m)} per LoRa link, hops at 80 % of that, straight lines. Measure the range and start with --range.`;
+}
+
+/* ---------- nodes, log, alerts ---------- */
+function drawNodes(st) {
+  const me = st.self, rows = [];
+  if (me.name) rows.push([me.name + " (HQ)", st.link ? STATUS.ONLINE : STATUS.UNKNOWN, st.link ? "this feed" : "–", "–", "–",
+                          hasPos(me) ? posSrc(me.pos_src) : "none"]);
+  for (const n of st.nodes) rows.push([n.name, STATUS[n.status], dur(n.age_ms / 1000) + " ago", n.via === n.name ? "direct" : "via " + n.via,
+                                       `${n.rssi} dBm, SNR ${n.snr} dB · ${n.received_pct} % heard`, hasPos(n) ? (hasPos(me) ? fmtDist(distM(me, n)) + " from HQ" : "yes") + (n.pos_src ? ", " + posSrc(n.pos_src) : "") : "none"]);
+  $("nodes").replaceChildren(...rows.map(([name, s, age, route, sig, pos]) =>
+    el("tr", {}, el("td", {}, el("strong", {}, name)), el("td", {}, el("span", { className: s[2] }, s[0]), " " + s[1]),
+       el("td", {}, age), el("td", {}, route), el("td", {}, sig), el("td", {}, pos))));
+  const on = st.nodes.filter(n => n.status === "ONLINE").length;
+  $("node-count").textContent = st.nodes.length ? `${on} of ${st.nodes.length} far nodes online` : "no node heard yet";
+}
+let logKey = "", lastEvent = null, soundOn = false, audio = null;
+function drawLog(events) {
+  const shown = events.filter(e => e.kind !== "hb").reverse(), key = events.at(-1)?.id ?? 0;
+  if (key === logKey) return;
+  logKey = key;
+  $("log").replaceChildren(...shown.map(e => { const [i, c] = KIND[e.kind] ?? ["•", "muted"];
+    return el("li", {}, el("time", {}, e.t), el("span", { className: c }, i), el("span", {}, e.text)); }));
+}
+function beep(freq) {
+  if (!soundOn || !audio) return;
+  const o = audio.createOscillator(), g = audio.createGain();
+  o.frequency.value = freq;
+  g.gain.setValueAtTime(0.25, audio.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.6);
+  o.connect(g).connect(audio.destination); o.start(); o.stop(audio.currentTime + 0.6);
+}
+function newEvents(st) {
+  const top = st.events.at(-1)?.id ?? 0;
+  if (lastEvent !== null) for (const e of st.events) if (e.id > lastEvent) {
+    if (e.kind === "sos") { beep(1200); setTimeout(() => beep(1200), 700); }
+    if (e.kind === "offline" || e.kind === "link") beep(600);
+  }
+  lastEvent = top;
+}
+function drawAlert(st) {
+  const sos = st.messages.filter(m => m.sos && !m.handled), off = st.nodes.filter(n => n.status === "OFFLINE"), parts = [];
+  if (sos.length) parts.push(`🆘 ${sos.length} SOS waiting. Newest: #${sos[0].id} through node ${sos[0].node}: “${sos[0].text}”${sos[0].landmark ? " at " + sos[0].landmark : ""}`);
+  if (!st.link) parts.push(`✕ No feed from node C (${st.url}): ${st.error}`);
+  if (off.length) parts.push("✕ " + off.map(n => `Node ${n.name} OFFLINE, silent ${dur(n.age_ms / 1000)}`).join(", "));
+  const text = parts.join("   ·   ");
+  if ($("alert").textContent !== text) $("alert").textContent = text;
+  $("alert").classList.toggle("show", !!text);
+  document.title = (sos.length ? `🆘 ${sos.length} SOS · ` : !st.link ? "⚠ NO FEED · " : "") + "BLACKOUT NET control room";
+}
+
+function render(st) {
+  $("feed").replaceChildren(el("span", { className: st.link ? "good" : "crit" }, st.link ? "●" : "✕"),
+                            st.link ? ` Node ${st.self.name} feed, ${st.url}` : " No feed from node C");
+  drawAlert(st); drawMap(st); drawScout(st); drawPlan(st); drawMessages(st); drawNodes(st); drawLog(st.events); newEvents(st);
+  $("foot").textContent = `Heartbeats saved to ${st.csv}. Messages and what was done about them are kept on this laptop, so a restart of node C loses nothing here.`;
+}
+
+let timer = null;
+async function tick(once) {
+  clearTimeout(timer);
+  try { render(await (await fetch("/state", { cache: "no-store" })).json()); }
+  catch (e) {
+    $("alert").textContent = "✕ The control room script is not running. Start it again: python tools/control_room.py ...";
+    $("alert").classList.add("show");
+  }
+  timer = setTimeout(tick, 1000);
+}
+$("fit").onclick = fitAll;
+for (const [id, name] of [["lay-sat", "sat"], ["lay-str", "streets"]]) $(id).onclick = () => {
+  layer = name; $("lay-sat").setAttribute("aria-pressed", name === "sat"); $("lay-str").setAttribute("aria-pressed", name !== "sat"); tick(true);
+};
+$("sound").onclick = () => {
+  soundOn = !soundOn; audio ??= new AudioContext();
+  $("sound").setAttribute("aria-pressed", soundOn); $("sound").textContent = "Sound alerts: " + (soundOn ? "on" : "off"); beep(900);
+};
+tick();
+</script>
+</body>
+</html>

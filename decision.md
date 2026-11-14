@@ -17,17 +17,28 @@ Each entry gives what was chosen, what else was considered, and why. The procedu
 - **Instead of:** a separate pin map per role.
 - **Why:** any board can become any node, and a spare can replace a broken one in minutes.
 
+### Two boards supported: ESP32 DevKit and NodeMCU ESP8266 (added 15 November 2026)
+- **Instead of:** ESP32 only.
+- **Why:** the team built nodes B and C on NodeMCU boards. One program serves both; the pins, storage and
+  library differences switch by themselves when the board is chosen in the Arduino IDE. The radio protocol
+  is the same, so ESP32 and ESP8266 nodes work together.
+- **Cost:** an ESP8266 hotspot cannot measure a phone's signal, so the sender's search circle needs node A
+  on an ESP32. The ESP8266 has 80 KB of RAM: 44 KB is used before the hotspot starts. Phase 2 has the same
+  changes but has only been compiled for the ESP32.
+
 ### Power: wall charger plus a power bank for the demonstration
 - **Instead of:** wall charger only.
 - **Why:** the team chose wall chargers for convenience. A project named BLACKOUT NET will be asked what
   happens in a blackout, so the demonstration still runs on power banks.
 
-### Positions typed into each node's settings
-- **Instead of:** a GPS module on every node, or the phone's location.
-- **Why:** the nodes do not move, so a position read once from a maps app is enough and costs nothing. A GPS
-  module needs open sky and gets no fix indoors. Browsers refuse location access on a plain-HTTP page such as
-  http://192.168.4.1.
-- **Cost:** someone has to enter the position whenever a node is moved.
+### Position typed in once over USB; nodes on drones take the drone's GPS
+- **Instead of:** a GPS module on every node (the team decided against it), or only `platformio.ini`.
+- **Why:** node A stays put, so typing its position once (`pos lat lon` in the serial monitor, kept in
+  flash) is enough, without reflashing. Nodes B and C ride on drones that already have GPS: the control room
+  shows them at their drone's live position from the GCS. No extra part, wire or library.
+- **Why USB and not the phone page:** the hotspot is open; anyone could move a node on the map and send the
+  scout to the wrong place. USB needs the box in hand.
+- **Cost:** a ground node that is moved keeps its old position until it is typed again.
 
 ## Firmware structure
 
@@ -123,7 +134,7 @@ Each entry gives what was chosen, what else was considered, and why. The procedu
   30 s that is about 2 % of air time; at 10 s about 5 %, half of the 10 % limit gone before any real message.
 - **Cost:** a dead node is reported after 90 s instead of 30 s.
 
-### Text limit counted in bytes (38 for message plus landmark)
+### Text limit counted in bytes (37 for message plus landmark)
 - **Instead of:** a character limit.
 - **Why:** the packet limit is in bytes. Hindi and other non-Latin scripts take about 3 bytes a character,
   so a character limit would let messages through that do not fit.
@@ -147,9 +158,12 @@ Each entry gives what was chosen, what else was considered, and why. The procedu
 
 ## Wi-Fi and phone page
 
-### Node B has no Wi-Fi
-- **Instead of:** a hotspot on all three nodes.
-- **Why:** B's only job is relaying. One setting in `config.h` turns its hotspot on if needed.
+### Every node has a hotspot, and a phone can send through any of them (changed 15 November 2026)
+- **Instead of:** B as a radio-only relay and C as receive-only (the first plan).
+- **Why:** the team asked for it: whoever is near any node can send an SOS. A message sent through B goes to
+  C by radio like one from A. One sent through C, the HQ, goes straight into its inbox and shows DELIVERED at
+  once; C's SOS button works the same way.
+- **Cost:** B's hotspot uses memory and power; anyone joining `BLACKOUT_C` can also open the HQ inbox tab.
 
 ### Open hotspot, captive portal
 - **Instead of:** a password-protected network.
@@ -158,8 +172,8 @@ Each entry gives what was chosen, what else was considered, and why. The procedu
 - **Cost:** anyone in range can send requests. The firmware limits the queue, and the button has a 5 s
   lock, but there is no per-person limit yet.
 
-### A and C on different Wi-Fi channels (1 and 6)
-- **Why:** less interference between the two hotspots when the nodes are tested side by side.
+### A, B and C on different Wi-Fi channels (1, 11 and 6)
+- **Why:** less interference between the three hotspots when the nodes are tested side by side.
 
 ### Separate "Acknowledge" for the coordinator
 - **Instead of:** using the radio ACK as the coordinator's reply.
@@ -182,6 +196,158 @@ Each entry gives what was chosen, what else was considered, and why. The procedu
 - **Instead of:** picking routes from GPS distance.
 - **Why:** walls and terrain matter more than metres, so measured signal strength is a better guide than
   distance. Routing belongs in the firmware, and flooding already finds every path that works.
+
+## Phase 2: adaptive spreading factor
+
+### Phases in separate folders
+- **Instead of:** adding the feature to the one firmware folder, or keeping it on a git branch.
+- **Why:** phase 1 can be proven on the hardware first. A fault that appears only with phase 2 is then in
+  the adaptive part. Two folders are easier for the whole team to find than a branch.
+- **Cost:** a fix to the shared parts must be made in both folders.
+- **Control-room support went into both phases** (at the team's request), not a third folder: whichever
+  phase is flashed works with the control room. Phase 1 now uses protocol version 3 and phase 2 version 4,
+  so boards with old and new firmware ignore each other instead of misreading the new message layout.
+
+### One SF for the whole network, chosen by the HQ
+- **Instead of:** a different SF for each link, as the brief suggested ("a distant node slower, a nearby
+  node faster").
+- **Why:** an SX1278 receives only packets sent with the SF it is set to, and the relay forwards by
+  broadcast to whoever hears it. A per-link SF would need each node to listen on several SFs at once (the
+  multi-channel gateway chips used by LoRaWAN do this; the SX1278 cannot) or a time schedule with clock
+  synchronisation. One shared SF avoids both. The network is set by its weakest needed link, and in a
+  three-node line every link is needed anyway.
+- **Cost:** one weak link slows every link.
+
+### HQ is the coordinator
+- **Instead of:** every node deciding for itself.
+- **Why:** one decision-maker means nodes never disagree about the SF. The HQ already receives everyone's
+  heartbeats.
+
+### Decision from SNR with a 10 dB margin
+- **Instead of:** RSSI, or delivery statistics.
+- **Why:** SNR decides whether LoRa can decode, and the SX1278's decoding limit per SF is in its datasheet
+  (−7.5 dB at SF7 down to −15 dB at SF10). SNR in the same bandwidth stays about the same when the SF
+  changes, so one measurement predicts every SF. 10 dB is the usual LoRa safety margin for fading and
+  movement.
+
+### Only SF7 to SF10
+- **Instead of:** SF7 to SF12.
+- **Why:** at SF11 and SF12 a full packet takes about 1.7 s and 3.2 s on air, heartbeats alone would eat
+  much of the 10 % air time allowance, and a node searching for the network would take much longer.
+
+### "Fastest SF that still connects everyone", not "fastest SF for the worst link"
+- **Why:** a weak link that is not needed (for example A to C directly, when both reach B well) must not
+  hold the network back. The HQ checks which nodes remain reachable, through relays, at each SF.
+
+### Slow down at once, speed up one step after two checks agree
+- **Why:** a wrong step faster loses messages; a wrong step slower only costs time. The two-check rule
+  stops the network flipping back and forth on noisy measurements.
+
+### A silent node makes the HQ step slower
+- **Why:** the node may have dropped out because the current SF is too fast for its link. Stepping slower
+  is the only way to hear it again. It is no longer waited for after 10 minutes.
+
+### Switch announced ahead, with the time left, sent twice
+- **Instead of:** switching as soon as the announcement arrives.
+- **Why:** the announcement has to be relayed before anyone switches, or the nodes further away never hear
+  it. Each relay rewrites "time left" as it transmits, and each receiver subtracts the packet's air time, so
+  all nodes switch within a fraction of a second of each other. Two copies protect against one lost packet.
+
+### A lost node searches through the SFs; the HQ never does
+- **Instead of:** a fixed "meeting" SF that everyone returns to on a schedule.
+- **Why:** it needs no shared clock and also handles newly started nodes. The HQ stays put so there is
+  something fixed to find.
+- **Cost:** finding the network again can take up to about 5 minutes.
+
+### Heartbeat every 60 s at SF10
+- **Why:** a heartbeat at SF10 takes about twice the air time of one at SF9; doubling the interval keeps
+  heartbeats at the same share of the 10 % allowance.
+
+### Waits follow the air time
+- **Instead of:** fixed waits tuned for SF9.
+- **Why:** at SF10 a fixed 6 s ACK wait is too short and causes needless retries; at SF7 it wastes time.
+
+### Adaptive SF can be switched off on the HQ
+- **Why:** the gain has to be measured against the fixed setting on the same radios in the same places
+  (`tools/adaptive_test.py`). Off is also the safer setting for the relay-failure demonstration.
+
+## Drones and control room
+
+### Node B on a relay drone, node C (the HQ) on the gimbal drone
+- **Instead of:** the swarm's own task (spot an enemy drone, send interceptors), or C on the ground at the
+  control room.
+- **Why:** this is the team's plan. B in the air makes the hops longer: buildings, trees and the ground limit
+  LoRa range more than anything else. C on the gimbal drone S-01 puts the HQ, the camera and the drone that
+  goes to look in one place.
+- **Cost:** while S-01 is switched off there is no HQ, so messages expire. Keeping C on the ground at the
+  control room (on the laptop's USB) avoids that and needs no forwarder; the control room supports both
+  (`--serial` or `--udp`).
+
+### Both nodes powered from the drones' 5 V outputs
+- **Instead of:** their own power banks.
+- **Why:** the drones have 5 V outputs, and a power bank adds weight.
+- **Cost:** a battery change restarts the node. The control room shows the restart and keeps every message.
+
+### Node C's output reaches the control room through S-01's companion computer
+- **Instead of:** the laptop joining `BLACKOUT_C`, or node C joining the drones' router as a Wi-Fi client.
+- **Why:** the companion computer is already on the drones' Wi-Fi, so a 40-line forwarder
+  (`tools/hq_forward.py`) is enough. The laptop stays on the drones' network for the GCS, and node C's
+  hotspot stays independent of the router's channel.
+- **Cost:** one more program on the companion computer. UDP lines from anyone on the drones' network are
+  accepted; that network is the team's own, with a password.
+
+### Machine-readable lines on node C's USB: `@NODES` every 5 s and `@MSG` per message
+- **Instead of:** parsing the human log lines, or the control room polling node C's web API.
+- **Why:** JSON from ArduinoJson carries quotes, Hindi and missing fields safely; the node table is the same
+  JSON as `/api/nodes`, so the control room reuses the monitor's tested code. The human log is unchanged.
+
+### Control room: a separate page next to the GCS, using the GCS's API
+- **Instead of:** adding a panel inside the GCS, or building video and map serving again.
+- **Why:** the GCS is the team's own large program, already serving the ZR10 video as MJPEG, cached map
+  tiles and a REST API with `goto`. The control room only reads those and sends `goto`, so the GCS is not
+  changed and either can be restarted alone. Leaflet is copied in, so the page works without internet.
+
+### Drone plan computed in the control room, flown only on the operator's word
+- **Instead of:** the operator guessing where to hover the relay, or the control room flying drones by itself.
+- **Why:** the control room already knows every node's position, the HQ's home and the drones' positions, so
+  it can place relay points so no hop is longer than 80 % of the measured range, assign them to the relay
+  drones, and check before take-off that node C, riding on the scout, stays in reach of the mesh along the
+  whole flight. Each move still needs a click and a confirmation, and goes through the GCS.
+- **How:** nearest ground node first, each joins the closest point already linked, with relays evenly spaced
+  on that straight line. Simple to check by hand and right for a handful of nodes.
+- **Cost:** no terrain, buildings, wind or battery in the plan; it is only as good as `--range`. For many
+  nodes, a proper placement search would use fewer relays.
+
+### The scout flies only when an operator confirms
+- **Instead of:** sending S-01 automatically on every SOS.
+- **Why:** a message on an open hotspot is not proof of an emergency, and a drone flight is a safety
+  decision. The GCS's `goto` switches S-01 to GUIDED; the pilot can take over from the GCS or the radio.
+
+### Messages kept on the control room's disk (`messages.jsonl`)
+- **Why:** node C keeps its inbox in memory and rides on a drone whose battery gets changed. The control room
+  is where nothing may be lost, and it records what was done (scout sent, handled).
+- **Cost:** the file holds people's messages; it is in `.gitignore` and must not be shared.
+
+### Sender's location from node A's position and the phone's Wi-Fi signal, not the phone's GPS
+- **Instead of:** the phone's GPS through the browser, or using the sender's mobile data.
+- **Why:** browsers give location only to HTTPS pages. The node's page is plain HTTP with no internet, and
+  an HTTPS page on the node would show every sender a certificate warning first, which a frightened person
+  should not have to click through. Node A's position plus how strongly it hears the phone (1 byte in the
+  packet) gives a search circle of about 10–150 m with nothing asked of the sender.
+- **Cost:** a circle, not a point; the dBm-to-metres model is fixed until calibrated on site. The message
+  room shrank from 38 to 37 bytes.
+- **Later:** an HTTPS page on node A for exact phone GPS can be tried, if the certificate warning proves
+  acceptable on real phones.
+
+### City plan as a separate planning tool
+- **Instead of:** claiming a Delhi-wide mesh works today.
+- **Why:** it shows the idea with numbers (sites, HQs needed, hops) and states what the claim depends on:
+  the link range between masts, which must be measured, and routing towards the nearest HQ, which today's
+  flooding relay does not do. It works from real flag positions as soon as the team has them.
+
+### Flights recorded before judging
+- **Why:** flying is not allowed at the venue. The ground side runs live on the table with the drones parked
+  and powered, and the videos show the same thing in the air.
 
 ## Repository
 

@@ -69,7 +69,8 @@ class Monitor:
         """Fold one /api/nodes reply into the state. Raises KeyError/TypeError/ValueError if it has the wrong shape."""
         me = {"name": str(data["self"]["name"]), "uptime_s": int(data["self"]["uptime_s"]),
               "wifi_clients": int(data["self"]["wifi_clients"]),
-              "lat": coord(data["self"], "lat", 90), "lon": coord(data["self"], "lon", 180)}
+              "lat": coord(data["self"], "lat", 90), "lon": coord(data["self"], "lon", 180),
+              "pos_src": data["self"].get("pos_src"), "gps_age_s": data["self"].get("gps_age_s")}
         interval = float(data["hb_interval_s"])
         if interval <= 0:
             raise ValueError("hb_interval_s must be above 0")
