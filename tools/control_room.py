@@ -12,6 +12,7 @@ Nodes on drones are then shown at their drone's GPS position from the GCS.
 
 No hardware at all (fake node C and fake GCS):     python tools/control_room.py --mock
 Self-test:                                         python tools/control_room.py --selftest
+With no options it finds node C on this laptop's USB by itself (double-click tools/control_room.bat).
 Needs pyserial for --serial (pip install pyserial); everything else is the standard library.
 """
 import argparse, collections, csv, datetime, http.server, json, math, os, socket, tempfile, threading, time
@@ -270,6 +271,42 @@ class Gcs:
                          {"lat": lat, "lon": lon, "alt": self.alt if alt is None else alt})
 
 
+def node_name(buf):
+    """Name of the node whose USB output this is (from its first complete @NODES line), or None."""
+    for line in buf.split(b"\n")[:-1]:  # the last piece may be cut off
+        if line.startswith(b"@NODES "):
+            try:
+                return str(json.loads(line[7:])["self"]["name"])
+            except (ValueError, KeyError, TypeError):
+                pass
+    return None
+
+
+def find_nodes(wait_s=7):
+    """{node name: COM port} for every BLACKOUT node on this laptop's USB. Boards are not restarted."""
+    import serial
+    from serial.tools import list_ports
+    found = {}
+    for p in list_ports.comports():
+        if "BTHENUM" in (p.hwid or "") or "Bluetooth" in (p.description or ""):
+            continue
+        try:
+            s = serial.Serial()
+            s.port, s.baudrate, s.timeout = p.device, 115200, 0.3
+            s.dtr = s.rts = False
+            s.open()
+            with s:
+                end, buf, name = time.time() + wait_s, b"", None
+                while time.time() < end and not name:
+                    buf = (buf + s.read(4096))[-8192:]  # a chatty non-BLACKOUT board must not fill memory
+                    name = node_name(buf)
+            if name:
+                found[name] = p.device
+        except Exception:  # busy (Arduino Serial Monitor open) or not a serial board: skip it
+            pass
+    return found
+
+
 def read_serial(port, room):
     import serial  # pip install pyserial
     while True:
@@ -479,6 +516,8 @@ def mock(room, gcs_port):
 # ---------------------------------------------------------------------------------------------- self-test
 def selftest():
     assert search_radius_m(None) == 100 and search_radius_m(0) == 100
+    assert node_name(b'*wm:Starting\r\n@NODES {"self":{"name":"C"},"nodes":[]}\r\n@NOD') == "C"
+    assert node_name(b'@NODES {"self":{"name":"C"') is None and node_name(b"garbage\n\xff\n") is None
     assert search_radius_m(-55) == 10 and search_radius_m(-70) == 32 and search_radius_m(-95) == 150
     assert abs(distance_m(28.75, 77.116, 28.75, 77.118) - 195) < 1
     # drone plan: 2.2 km needs one relay at 1500 m range (hops of at most 1200 m); 500 m needs none
@@ -567,8 +606,15 @@ def main():
     a = ap.parse_args()
     if a.selftest:
         return selftest()
-    if not (a.serial or a.udp or a.mock):
-        ap.error("give --serial PORT, --udp PORT or --mock")
+    if not (a.serial or a.udp or a.mock):  # nothing given: find node C (else any node) on this laptop's USB
+        print("Looking for BLACKOUT nodes on USB (close the Arduino Serial Monitor first)...")
+        found = find_nodes()
+        print("Found: " + (", ".join(f"node {n} on {port}" for n, port in sorted(found.items())) or "none"))
+        if not found:
+            raise SystemExit("No BLACKOUT node on USB. Plug node C into this laptop and run this again.")
+        a.serial = found.get("C") or next(iter(found.values()))
+        if "C" not in found:
+            print(f"Node C is not plugged in: showing what {a.serial} hears instead.")
     if a.mock:
         a.gcs, a.messages = a.gcs or "http://127.0.0.1:8799", os.path.join(tempfile.mkdtemp(), "messages.jsonl")
         a.relays, a.hq_on_scout = a.relays or "I-01=B", True
