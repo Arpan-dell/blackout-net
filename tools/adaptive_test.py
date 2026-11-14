@@ -9,16 +9,19 @@ Each run sends 20 messages from node A and prints how many were delivered, the m
 air time node A used per delivered message. Results are added to adaptive_results.csv.
 One run is one sample: repeat each a few times, and write down distances and antennas with the numbers.
 """
-import csv, datetime, json, os, statistics, sys, time
+import csv, datetime, json, os, re, statistics, sys, time
 import urllib.request
 
 BASE = "http://192.168.4.1"
 COUNT = 20
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # a campus proxy cannot reach 192.168.4.1
+CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "firmware-phase2", "include", "config.h")
+PIN = re.search(r'#define COORD_PIN "([^"]*)"', open(CONFIG, encoding="utf-8").read())[1]  # same PIN on every node
 
 
 def call(path, body=None):
     data = json.dumps(body).encode() if body is not None else None
+    path += ("&" if "?" in path else "?") + "pin=" + PIN  # lifts the 3-per-phone limit for the 20 test messages
     req = urllib.request.Request(BASE + path, data, {"Content-Type": "application/json"})
     with opener.open(req, timeout=5) as r:
         return json.load(r)

@@ -5,15 +5,18 @@ It queues 20 normal messages followed by 3 SOS messages, once with priority on a
 and prints the delivery count and median delay of each class. Takes about 4 minutes.
 One run is one sample: repeat it, and report the conditions (distance, antennas, radio settings).
 """
-import json, statistics, sys, time
+import json, os, re, statistics, sys, time
 import urllib.request
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://192.168.4.1"
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # a campus proxy cannot reach 192.168.4.1
+CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "firmware", "include", "config.h")
+PIN = re.search(r'#define COORD_PIN "([^"]*)"', open(CONFIG, encoding="utf-8").read())[1]  # same PIN on every node
 
 
 def call(path, body=None, method=None):
     data = json.dumps(body).encode() if body is not None else None
+    path += ("&" if "?" in path else "?") + "pin=" + PIN  # lifts the 3-per-phone limit and unlocks /api/mode
     req = urllib.request.Request(BASE + path, data, {"Content-Type": "application/json"}, method=method)
     with opener.open(req, timeout=5) as r:
         return json.load(r)

@@ -1,0 +1,4 @@
+time,label,sf,sent,delivered,median_delay_s,air_s_per_delivered,sf_changed
+2026-11-15T05:02:02,fixed,9,20,19,80.45,0.799,False
+2026-11-15T05:03:59,adaptive,9,20,20,48.48,0.373,True
+2026-11-15T05:05:32,adaptive,8,20,20,47.62,0.337,True

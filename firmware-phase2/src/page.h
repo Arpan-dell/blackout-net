@@ -55,6 +55,13 @@ pre { font-size: 12px; overflow: auto; max-height: 320px; margin: 0; white-space
   <p class="offline">Local network only. No internet is needed or used. Stay connected to this Wi-Fi.</p>
   <div id="link" role="alert"></div>
 
+  <div class="card" id="locked" hidden>
+    <h2>Coordinators only</h2>
+    <p class="hint">The inbox, everyone's messages and the settings need the coordinator PIN.</p>
+    <input type="password" id="pin-in" inputmode="numeric" autocomplete="off" aria-label="Coordinator PIN" placeholder="PIN">
+    <button id="pin-go" type="button">Unlock</button> <span id="pin-say" class="hint" role="status"></span>
+  </div>
+
   <nav aria-label="Sections">
     <button id="tab-send" hidden>Send</button>
     <button id="tab-inbox" hidden>HQ inbox</button>
@@ -131,8 +138,12 @@ let st = null, tab = null, room = 38, mine = [], drawn = {};
 try { mine = JSON.parse(localStorage.getItem("mine") || "[]"); } catch (e) {}
 const firstSeen = new Map();  // message id -> clock time it arrived, worked out once
 
+let pin = "", coordinator = false;
+try { pin = localStorage.getItem("pin") || ""; } catch (e) {}
+function setPin(v) { pin = v; try { localStorage.setItem("pin", v); } catch (e) {} }
 async function api(path, opt) {
-  const r = await fetch(path, opt), j = await r.json().catch(() => ({}));
+  const url = pin ? path + (path.includes("?") ? "&" : "?") + "pin=" + encodeURIComponent(pin) : path;
+  const r = await fetch(url, opt), j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
   return j;
 }
@@ -264,6 +275,10 @@ async function poll() {
     $("tab-inbox").hidden = !isHq;
     if (!tab) { show("send"); count(); }
     const msgs = await api("/api/messages");
+    if (pin && !msgs.coordinator) { setPin(""); $("pin-say").textContent = "Wrong PIN."; }  // stop resending a wrong one
+    coordinator = msgs.coordinator;
+    if (coordinator && $("pin-say").textContent === "Checking...") $("pin-say").textContent = "Unlocked.";
+    $("locked").hidden = coordinator || tab === "send" || !tab;
     drawMine(msgs.outbox);
     drawTickets(msgs.inbox);
     if (tab === "net") drawNet(await api("/api/nodes"), await api("/api/log"));
@@ -274,6 +289,7 @@ async function poll() {
     $("link").textContent = "✕ Lost contact with the node. Check that this phone is still on the BLACKOUT Wi-Fi.";
   }
 }
+$("pin-go").onclick = () => { setPin($("pin-in").value.trim()); $("pin-in").value = ""; $("pin-say").textContent = "Checking..."; poll(); };
 poll();
 setInterval(poll, 1500);
 </script>

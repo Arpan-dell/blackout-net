@@ -184,6 +184,28 @@ Each entry gives what was chosen, what else was considered, and why. The procedu
 - **Why:** the hold filters switch bounce and knocks on the box; the lock stops a stuck or repeatedly pressed
   button from flooding the channel; the HQ is the receiver, so an SOS from it has nowhere to go.
 
+### Coordinator PIN, not a Wi-Fi password on the HQ (added 15 November 2026)
+- **Instead of:** a WPA2 password on `BLACKOUT_C` (the first audit's suggestion).
+- **Why:** anyone must be able to send an SOS through C, so its hotspot stays open. What needs protecting is
+  the HQ's power: reading the inbox, acknowledging tickets, and changing settings (`/api/mode`). Those now need
+  `COORD_PIN` from `config.h`, sent as `?pin=`; the phone page asks for it once. After 5 wrong tries the PIN
+  is refused for 30 s, so it cannot be guessed quickly.
+- **Cost:** someone guessing can lock coordinators out for 30 s at a time. The PIN travels unencrypted over
+  the open Wi-Fi, so a determined attacker nearby could still capture it.
+
+### Each phone sees only its own messages, at most 3 on their way at once
+- **Why:** before, anyone on the hotspot could read every sender's text and landmark at `/api/messages`, and
+  one phone could fill the 32-message queue so nobody else could send an SOS. Each message now remembers the
+  phone's address; a phone sees only its own, and may have 3 unfinished at a time. Message text is also left
+  out of the radio log on the Network tab. The test scripts send the PIN, which lifts the limit.
+- **Cost:** a phone that rejoins and gets a new address loses sight of its earlier messages.
+
+### An unanswered SOS is never overwritten in the HQ inbox
+- **Why:** when the 32 slots were full, the oldest message was reused even if it was an unanswered SOS, and
+  its sender still saw DELIVERED. Now the oldest acknowledged message goes first, then the oldest unanswered
+  normal one. If all 32 are unanswered SOS, the new message is not kept and not confirmed, so its sender
+  retries and ends on NOT DELIVERED, which is the truth. Checked at every start by the self-test.
+
 ## Laptop tools
 
 ### Browser dashboard served by a Python script

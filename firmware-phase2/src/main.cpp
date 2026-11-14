@@ -111,6 +111,7 @@ struct Msg {  // a message this node originated
   uint8_t prio, cat, tries, state, ackVia;
   int8_t phoneRssi;
   uint32_t id, order, createdMs, retryAtMs, doneMs;
+  uint32_t senderIp;  // the phone that sent it (0 = the node's own SOS button)
   float ackRssi;
   char text[TEXT_ROOM + 1], landmark[TEXT_ROOM + 1];
 };
@@ -286,7 +287,7 @@ Msg *queueMessage(uint8_t prio, uint8_t cat, const char *text, const char *landm
   slot->createdMs = millis();
   strlcpy(slot->text, text, sizeof(slot->text));
   strlcpy(slot->landmark, landmark, sizeof(slot->landmark));
-  logf("QUEUED #%lu %s %s \"%s\"", (unsigned long)slot->id, prio == P_SOS ? "SOS" : "normal", CATEGORY[cat], text);
+  logf("QUEUED #%lu %s %s", (unsigned long)slot->id, prio == P_SOS ? "SOS" : "normal", CATEGORY[cat]);
   return slot;
 }
 
@@ -538,17 +539,31 @@ void switchTick() {
 // ---------------------------------------------------------------- receiving
 void fillTicket(JsonObject o, const Ticket &t);  // in the web API section
 
-void storeTicket(const Packet &p, float rssi, float snr) {
-  for (const Ticket &t : inbox)  // a retry of a message already in the inbox: ACK it again, store nothing
-    if (t.used && t.origin == p.origin && t.id == p.id) return;
+// A place for a new inbox message: a free slot, else the oldest acknowledged one, else the oldest unanswered
+// normal one. An unanswered SOS is never overwritten: with the inbox full of them, there is no place (nullptr).
+Ticket *freeTicket() {
   Ticket *slot = nullptr;
   for (Ticket &t : inbox)
-    if (!t.used) { slot = &t; break; }
-  if (!slot)  // full: reuse the oldest acknowledged ticket, else the oldest of all
-    for (Ticket &t : inbox)
-      if (!slot || (t.acked && !slot->acked) ||
-          (t.acked == slot->acked && (int32_t)(t.arrivedMs - slot->arrivedMs) < 0))
-        slot = &t;
+    if (!t.used) return &t;
+  for (Ticket &t : inbox) {
+    if (!t.acked && t.prio == P_SOS) continue;
+    if (!slot || (t.acked && !slot->acked) || (t.acked == slot->acked && (int32_t)(t.arrivedMs - slot->arrivedMs) < 0))
+      slot = &t;
+  }
+  return slot;
+}
+
+// Keeps a message in the inbox. False if it cannot: then it is not confirmed either, so the sender retries and in
+// the end shows NOT DELIVERED, which is the truth.
+bool storeTicket(const Packet &p, float rssi, float snr) {
+  for (const Ticket &t : inbox)  // a retry of a message already in the inbox: ACK it again, store nothing
+    if (t.used && t.origin == p.origin && t.id == p.id) return true;
+  Ticket *slot = freeTicket();
+  if (!slot) {
+    logf("INBOX FULL of unanswered SOS: #%lu not kept, not confirmed", (unsigned long)p.id);
+    stats.dropped++;
+    return false;
+  }
   uint8_t tl = p.payload[2];
   *slot = {};
   slot->used = true;
@@ -563,8 +578,7 @@ void storeTicket(const Packet &p, float rssi, float snr) {
   slot->snr = snr;
   memcpy(slot->text, p.payload + 3, tl);
   memcpy(slot->landmark, p.payload + 3 + tl, p.len - 3 - tl);
-  logf("INBOX #%lu from %c %s \"%s\"", (unsigned long)p.id, nodeChar(p.origin), p.prio == P_SOS ? "SOS" : "normal",
-       slot->text);
+  logf("INBOX #%lu from %c %s", (unsigned long)p.id, nodeChar(p.origin), p.prio == P_SOS ? "SOS" : "normal");
   // For tools/control_room.py on the USB port: one JSON line, with where the sending node stands.
   JsonDocument doc;
   fillTicket(doc.to<JsonObject>(), *slot);
@@ -578,6 +592,7 @@ void storeTicket(const Packet &p, float rssi, float snr) {
   Serial.print("@MSG ");
   serializeJson(doc, Serial);
   Serial.println();
+  return true;
 }
 
 void markDelivered(const Packet &p, float rssi) {
@@ -600,7 +615,10 @@ Msg *newMessage(uint8_t prio, uint8_t cat, const char *text, const char *landmar
   Msg *m = queueMessage(prio, cat, text, landmark, phoneRssi);
   if (!m || NODE_ID != HQ_ID) return m;
   m->tries = 1;
-  storeTicket(dataPacket(*m, 1), NAN, NAN);
+  if (!storeTicket(dataPacket(*m, 1), NAN, NAN)) {  // inbox full of unanswered SOS
+    m->used = false;
+    return nullptr;
+  }
   m->state = S_DELIVERED;
   m->doneMs = millis();
   m->ackVia = NODE_ID;
@@ -660,8 +678,7 @@ void handlePacket(Packet &p, float rssi, float snr, uint32_t airMs) {
       markDelivered(p, rssi);
     } else if (p.len < 3 || 3 + p.payload[2] > p.len) {
       stats.badPackets++;
-    } else {
-      storeTicket(p, rssi, snr);
+    } else if (storeTicket(p, rssi, snr)) {  // not kept: no ACK, the sender retries and in the end gives up
       Packet ack = {};  // end-to-end ACK back to the origin, one for every try that reaches us
       ack.type = T_ACK; ack.origin = NODE_ID; ack.dest = p.origin; ack.id = p.id;
       ack.attempt = p.attempt; ack.ttl = DATA_TTL; ack.prio = p.prio;
@@ -831,7 +848,35 @@ int8_t phoneRssi(IPAddress ip) {
 }
 #endif
 
+// The coordinator's PIN (config.h), sent as ?pin=. It unlocks the inbox, everyone's messages and the settings.
+// After 5 wrong tries the PIN is refused for 30 s, so it cannot be guessed quickly.
+bool coordinatorOk() {
+  static uint8_t wrong = 0;
+  static uint32_t lockUntil = 0;
+  if (!server.hasArg("pin")) return false;
+  if (lockUntil && (int32_t)(millis() - lockUntil) < 0) return false;
+  if (server.arg("pin") == COORD_PIN) {
+    wrong = 0;
+    return true;
+  }
+  if (++wrong >= 5) {
+    wrong = 0;
+    lockUntil = (millis() + 30000) | 1;
+    logf("PIN: 5 wrong tries, refused for 30 s");
+  }
+  return false;
+}
+
 void apiSend() {
+  bool coord = coordinatorOk();
+  uint32_t ip = server.client().remoteIP();
+  if (!coord) {  // one phone must not fill the queue everyone shares (the test scripts send the PIN)
+    uint8_t open = 0;
+    for (const Msg &m : outbox) open += m.used && m.state < S_DELIVERED && m.senderIp == ip;
+    if (open >= MAX_OPEN_PER_PHONE)
+      return sendError(429, ("This phone already has " + String(MAX_OPEN_PER_PHONE) +
+                             " messages on their way: wait until one is delivered").c_str());
+  }
   JsonDocument in;
   if (deserializeJson(in, server.arg("plain"))) return sendError(400, "The request body must be JSON");
   const char *text = in["text"] | "", *landmark = in["landmark"] | "";
@@ -844,33 +889,41 @@ void apiSend() {
   Msg *m = newMessage(!strcasecmp(type, "SOS") ? P_SOS : P_NORMAL, cat, text, landmark,
                         phoneRssi(server.client().remoteIP()));
   if (!m) return sendError(429, "The queue is full: wait for earlier messages to finish");
+  m->senderIp = ip;
   JsonDocument out;
   out["message_id"] = m->id;
   out["status"] = "queued";
   sendJson(202, out);
 }
 
+// A phone sees only the messages it sent. The inbox, and everyone's messages, need the coordinator PIN.
 void apiMessages() {
+  bool coord = coordinatorOk();
+  uint32_t ip = server.client().remoteIP();
   JsonDocument doc;
   doc["node"] = nodeName(NODE_ID);
+  doc["coordinator"] = coord;
   JsonArray out = doc["outbox"].to<JsonArray>(), in = doc["inbox"].to<JsonArray>();
   for (const Msg &m : outbox)
-    if (m.used) fillMsg(out.add<JsonObject>(), m);
-  for (const Ticket &t : inbox)
-    if (t.used) fillTicket(in.add<JsonObject>(), t);
+    if (m.used && (coord || m.senderIp == ip)) fillMsg(out.add<JsonObject>(), m);
+  if (coord)
+    for (const Ticket &t : inbox)
+      if (t.used) fillTicket(in.add<JsonObject>(), t);
   sendJson(200, doc);
 }
 
 void apiMessageById() {
   uint32_t id = strtoul(server.pathArg(0).c_str(), nullptr, 10);
+  bool coord = coordinatorOk();
+  uint32_t ip = server.client().remoteIP();
   JsonDocument doc;
   for (const Msg &m : outbox)
-    if (m.used && m.id == id) {
+    if (m.used && m.id == id && (coord || m.senderIp == ip)) {
       fillMsg(doc.to<JsonObject>(), m);
       return sendJson(200, doc);
     }
   for (const Ticket &t : inbox)
-    if (t.used && t.id == id) {
+    if (coord && t.used && t.id == id) {
       fillTicket(doc.to<JsonObject>(), t);
       return sendJson(200, doc);
     }
@@ -879,6 +932,7 @@ void apiMessageById() {
 
 // The coordinator's own "I have seen this". It stays on the HQ and is not a radio ACK.
 void apiTicketAck() {
+  if (!coordinatorOk()) return sendError(403, "Coordinator PIN needed");
   uint32_t id = strtoul(server.pathArg(0).c_str(), nullptr, 10);
   for (Ticket &t : inbox)
     if (t.used && t.id == id) {
@@ -1121,6 +1175,7 @@ void statusTick() {
 
 // POST /api/mode?priority=0|1 and/or adaptive=0|1, for the comparison tests.
 void apiMode() {
+  if (!coordinatorOk()) return sendError(403, "Coordinator PIN needed");
   bool setPriority = server.hasArg("priority"), setAdaptive = server.hasArg("adaptive");
   if (!setPriority && !setAdaptive) return sendError(400, "Give priority=1 or 0, and/or adaptive=1 or 0");
   if (setAdaptive && NODE_ID != HQ_ID)
@@ -1224,6 +1279,16 @@ void selfTest() {
     link(1, 2, NAN);
     ok = ok && fastestSf(q, member) == SF_MAX;  // B cut off at every SF: slowest setting
   }
+  for (Ticket &t : inbox) t = {true, false, 1, P_SOS};  // inbox full of unanswered SOS: nothing may be overwritten
+  ok = ok && !freeTicket();
+  inbox[5].prio = inbox[7].prio = P_NORMAL;
+  inbox[5].arrivedMs = 9;
+  inbox[7].arrivedMs = 4;
+  ok = ok && freeTicket() == &inbox[7];   // else the oldest unanswered normal message
+  inbox[20].acked = true;
+  inbox[20].arrivedMs = 50;
+  ok = ok && freeTicket() == &inbox[20];  // an acknowledged message goes first
+  memset(inbox, 0, sizeof(inbox));
   memset(seen, 0, sizeof(seen));
   seenAt = 0;
   Serial.println(ok ? "selftest ok" : "SELFTEST FAILED: do not trust this build");

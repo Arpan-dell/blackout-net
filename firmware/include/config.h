@@ -40,6 +40,11 @@
 #define LED_ON HIGH
 #endif
 
+// ---- coordinators: this PIN unlocks the HQ inbox, everyone's messages and the settings. CHANGE IT for the demo,
+// and flash all nodes with the same one. The test scripts read it from this file.
+#define COORD_PIN "202611"
+#define MAX_OPEN_PER_PHONE 3  // a phone may have this many messages on their way at once
+
 // ---- control room: every node prints its node table on USB this often (tools/control_room.py) ----
 #define USB_STATUS_MS 5000
 

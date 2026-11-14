@@ -64,6 +64,14 @@ selftest ok
 Power a second node. Within a few seconds each one logs `NEW NODE B heard via B`. That is the
 two-node ping test: both radios, both antennas and the settings are working.
 
+## Coordinator PIN
+
+The HQ inbox, everyone's messages and the settings (SOS-first switch, adaptive SF) need the coordinator PIN,
+`COORD_PIN` in `include/config.h` (default `202611`: **change it**, and flash every node with the same one).
+On the phone page, open the HQ inbox or Network tab and enter it once; the phone remembers it. Senders need
+no PIN: each phone sees only its own messages and may have 3 on their way at a time. The test scripts in
+`tools/` read the PIN from `config.h` by themselves.
+
 ## Position (for the map and for finding the sender)
 
 - Type its latitude and longitude into the serial monitor (115200 baud, line ending "New Line"), for

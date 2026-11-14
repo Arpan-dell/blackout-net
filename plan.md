@@ -370,6 +370,8 @@ Without any hardware: `python tools/control_room.py --mock` runs a fake node C a
 - One path only with three nodes; no rerouting if B fails.
 - Messages and the inbox are lost when a node loses power.
 - Packets are neither encrypted nor signed.
+- The coordinator PIN (`COORD_PIN` in `config.h`, default 202611) must be changed before the demo, and is
+  sent unencrypted over the open Wi-Fi.
 - Message text plus landmark: 37 bytes (about 12 characters of Hindi).
 - Transmit power is a conservative 8 dBm setting. The radiated power has not been measured, so there is no
   claim of compliance with the Indian 433 MHz rules yet.
