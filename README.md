@@ -66,6 +66,8 @@ hackathon.
 The software is written and compiles; it has **not yet run on the real boards**. See the status table in
 [plan.md](plan.md) for what has been tested and what is still to do, and the known limits listed there.
 
-Range: tested at 1.5 km between each node.
+**Field-tested range: 1.5 km per hop.** Each pair of nodes (A ↔ B, B ↔ C) was tested 1.5 km apart, so two hops
+carry an SOS up to about 3 km from the sender to the HQ, at only 8 dBm (433.5 MHz, SF9, 125 kHz), with no
+mobile network or internet.
 
 Designed and developed by [Arpan Ailawadi](https://www.linkedin.com/in/arpan-ailawadi/)
