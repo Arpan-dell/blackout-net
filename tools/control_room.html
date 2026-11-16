@@ -51,6 +51,18 @@ select { font: inherit; color: var(--ink); background: var(--surface); border: 1
 .video img { width: 100%; height: 100%; object-fit: contain; display: block; }
 #video-note { position: absolute; inset: 0; display: none; place-items: center; text-align: center; padding: 20px; color: #ddd; font-size: 14px; }
 #video-note.show { display: grid; }
+.video.aiming { cursor: crosshair; outline: 3px solid var(--scout); }
+/* camera controls, laid out like the GCS's Vision page */
+.camctl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 16px; margin-top: 10px; align-items: center; }
+.gpad { display: grid; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(3, 44px); gap: 4px; }
+.gpad button { padding: 0; min-height: 0; touch-action: none; user-select: none; font-size: 16px; }
+.camctl button.held { background: var(--ink); color: var(--surface); }
+.camsliders { display: grid; gap: 4px; }
+.camsliders label { display: grid; grid-template-columns: 72px minmax(0, 1fr) 60px; align-items: center; gap: 8px; font-size: 12px; color: var(--ink2); }
+.camsliders output { font-variant-numeric: tabular-nums; color: var(--ink); text-align: right; }
+.cambtns { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.cambtns button { touch-action: none; }
+@media (max-width: 480px) { .camctl { grid-template-columns: minmax(0, 1fr); } }
 .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px 12px; margin: 12px 0 0; }
 .facts dt { color: var(--ink2); font-size: 12px; }
 .facts dd { margin: 0; font-weight: 600; }
@@ -76,7 +88,7 @@ td { padding: 6px; border-bottom: 1px solid var(--grid); vertical-align: top; }
 .pin.hq { border-radius: 8px; }
 .pin.scout { background: var(--scout); color: #fff; border-color: #fff; font-size: 13px; width: 38px; }
 .pin.relay { background: var(--series); color: #fff; border-color: #fff; font-size: 13px; width: 38px; }
-.pin.plan { background: transparent; color: var(--scout); border: 3px dashed var(--scout); font-size: 12px; width: 38px; border-radius: 8px; box-shadow: none; }
+.pin.plan { background: var(--surface); color: var(--scout); border: 3px dashed var(--scout); font-size: 12px; width: 38px; border-radius: 8px; box-shadow: none; }
 #plan { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 #plan li { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; display: grid; gap: 4px; }
 #plan .row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
@@ -84,6 +96,39 @@ td { padding: 6px; border-bottom: 1px solid var(--grid); vertical-align: top; }
 .pin.sos { background: var(--crit); color: #fff; border-color: #fff; font-size: 11px; width: 38px; border-radius: 8px; }
 .pin.sos.done { background: var(--muted); }
 .leaflet-tooltip { font: 12px system-ui, sans-serif; }
+/* mission planner */
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.badge-n { display: inline-block; min-width: 20px; background: var(--crit); color: #fff; border-radius: 999px; padding: 0 6px; font-size: 12px; margin-left: 6px; }
+.virtual-banner { margin-bottom: 14px; padding: 10px 14px; border-radius: 10px; border: 2px dashed var(--scout); font-weight: 600; background: color-mix(in srgb, var(--scout) 10%, var(--surface)); }
+#mmap { height: 470px; border-radius: 8px; background: var(--grid); }
+#m-timeline { width: 100%; height: auto; display: block; margin-top: 12px; }
+#m-timeline text { fill: var(--ink2); font-size: 11px; font-family: system-ui, sans-serif; }
+#m-timeline .rowlabel { fill: var(--ink); font-weight: 600; }
+.clock { font: 600 22px/1 ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; }
+.runbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.mstatus, .warnlist, .loglist { list-style: none; margin: 0; padding: 0; }
+.mstatus li { display: grid; grid-template-columns: minmax(90px, auto) 1fr auto; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--grid); font-size: 13px; align-items: center; }
+.mstatus .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+.warnlist li { color: var(--crit); font-size: 13px; padding: 4px 0; }
+.warnlist li.ok { color: var(--good); }
+.loglist { max-height: 230px; overflow: auto; }
+.loglist li { display: grid; grid-template-columns: 62px 1fr; gap: 8px; font-size: 13px; padding: 3px 0; border-bottom: 1px solid var(--grid); }
+.loglist time { color: var(--ink2); font-variant-numeric: tabular-nums; }
+.params { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 12px; margin: 10px 0; }
+.params label { display: grid; gap: 3px; font-size: 12px; color: var(--ink2); }
+.params input { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 8px; padding: 5px 8px; min-height: 34px; width: 100%; }
+details summary { cursor: pointer; font-weight: 600; color: var(--ink2); font-size: 14px; }
+.plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 12px; }
+.plan-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.plan-card h3 { margin: 0 0 2px; font-size: 15px; }
+.plan-card table { font-size: 12px; margin-top: 6px; }
+.batt { height: 8px; border-radius: 999px; background: var(--grid); overflow: hidden; margin: 8px 0 2px; }
+.batt div { height: 100%; border-radius: 999px; }
+.pin.drone { width: 46px; font-size: 11px; background: var(--series); color: #fff; border-color: #fff; border-radius: 8px; }
+.pin.drone.scoutd { background: var(--scout); }
+.pin.drone.virtual { background: var(--surface); color: var(--series); border: 2px dashed var(--series); }
+.pin.home { width: 46px; border-radius: 8px; font-size: 12px; background: var(--ink); color: var(--surface); border-color: var(--surface); }
+.pin.station { width: 46px; background: var(--surface); color: var(--series); border: 2px dashed var(--series); font-size: 12px; border-radius: 8px; box-shadow: none; }
 footer { color: var(--ink2); font-size: 12px; margin-top: 10px; overflow-wrap: anywhere; }
 </style>
 </head>
@@ -99,6 +144,13 @@ footer { color: var(--ink2); font-size: 12px; margin-top: 10px; overflow-wrap: a
 
   <div id="alert" role="alert"></div>
 
+  <nav class="tabs" aria-label="Views">
+    <button id="tab-live" aria-pressed="true">Live</button>
+    <button id="tab-mission" aria-pressed="false">Mission planner<span id="mission-badge" class="badge-n" hidden></span></button>
+  </nav>
+
+  <div id="view-live">
+
   <div class="grid">
     <section class="card">
       <div class="head"><h2>Map</h2>
@@ -111,11 +163,34 @@ footer { color: var(--ink2); font-size: 12px; margin-top: 10px; overflow-wrap: a
       <div id="map" role="application" aria-label="Map of the nodes, the SOS calls and the scout drone"></div>
       <div class="caption" id="map-cap">Nodes at their positions (set above; nodes on connected drones follow the drone). Nodes on the same spot are drawn side by side. Red squares are SOS calls; the red circle is where to look for the sender. Purple is the scout drone.</div>
     </section>
-    <div class="stack">
-      <section class="card">
+    <div class="stack" id="live-stack">
+      <section class="card" id="camcard">
         <div class="head"><h2 id="video-title">Live camera</h2><button id="video-retry">Reload video</button></div>
-        <div class="video"><img id="video" alt="Live video from the scout drone's gimbal camera"><div id="video-note"></div></div>
+        <div class="video" id="video-wrap"><img id="video" alt="Live video from the scout drone's gimbal camera"><div id="video-note"></div></div>
+        <div class="caption" id="cam-state" role="status">Camera: waiting for the GCS</div>
+        <div class="camctl" aria-label="Camera controls (camera only, through the GCS)">
+          <div class="gpad" title="Hold to move the camera">
+            <span></span><button data-pad="0,1" aria-label="Tilt up (hold)">▲</button><span></span>
+            <button data-pad="-1,0" aria-label="Pan left (hold)">◀</button><button data-cam="center" title="Straight ahead and level">CTR</button><button data-pad="1,0" aria-label="Pan right (hold)">▶</button>
+            <span></span><button data-pad="0,-1" aria-label="Tilt down (hold)">▼</button><span></span>
+          </div>
+          <div class="camsliders">
+            <label>Zoom <input type="range" id="c-zoom" min="1" max="30" step="0.5" value="1"><output>1×</output></label>
+            <label>Pan <input type="range" id="c-yaw" min="-135" max="135" step="1" value="0"><output>0°</output></label>
+            <label>Tilt <input type="range" id="c-pitch" min="-90" max="25" step="1" value="0"><output>0°</output></label>
+            <label>Pad speed <input type="range" id="c-speed" min="5" max="100" step="5" value="30"><output>30 °/s</output></label>
+          </div>
+          <div class="cambtns">
+            <button data-cam="zoom-">− Zoom</button><button data-cam="zoom+">+ Zoom</button>
+            <button data-cam="af" title="Focus now, and again after every aim or zoom">Auto focus</button>
+            <button data-focus="-1" title="Hold: focus nearer (switches auto focus off)">◀ Near</button><button data-focus="1" title="Hold: focus farther (switches auto focus off)">Far ▶</button>
+            <button data-cam="aim" id="c-aim" aria-pressed="false" title="Then click on the video: the camera turns to that spot">Click to aim</button>
+            <button data-cam="snapshot" title="Photo on the camera's SD card">Photo</button><button data-cam="record" id="c-rec" title="Video on the camera's SD card">● Record</button>
+          </div>
+        </div>
+        <div class="caption crit" id="cam-say" role="alert"></div>
         <dl class="facts" id="scout-facts"></dl>
+        <label class="caption"><input type="checkbox" id="autocam"> Keep the camera on the SOS while the real scout flies (tilt and zoom only, through the GCS)</label>
       </section>
       <section class="card">
         <div class="head"><h2>Drone plan</h2><span class="caption" id="plan-sum"></span></div>
@@ -141,6 +216,41 @@ footer { color: var(--ink2); font-size: 12px; margin-top: 10px; overflow-wrap: a
         <ul id="log"></ul>
       </section>
     </div>
+  </div>
+  </div>
+
+  <div id="view-mission" hidden>
+    <div class="virtual-banner">VIRTUAL MISSION: nothing is sent to any drone. The plan and the run are a simulation on the map, made from the real SOS and node positions.</div>
+    <div class="grid">
+      <section class="card">
+        <div class="head"><h2 id="m-title">Mission</h2>
+          <span><label for="m-sos" class="caption">SOS</label> <select id="m-sos"><option value="">no SOS with a position yet</option></select></span></div>
+        <div id="mmap" role="application" aria-label="Mission map: HQ, SOS site, relay stations and the drones"></div>
+        <div class="caption" id="m-mesh" role="status"></div>
+        <svg id="m-timeline" role="img" aria-label="Mission timeline, one row per drone"></svg>
+        <div class="caption" id="m-legend"></div>
+      </section>
+      <div class="stack">
+        <section class="card" id="m-run">
+          <div class="head"><h2>Run</h2><span class="clock" id="m-clock" aria-live="off">T+0:00</span></div>
+          <div class="runbar">
+            <button id="m-arm" class="primary" disabled>ARM · run virtual mission</button>
+            <button id="m-pause" disabled>Pause</button>
+            <button id="m-reset" disabled>Reset</button>
+            <label class="caption" for="m-speed">Speed</label>
+            <select id="m-speed"><option value="1">1×</option><option value="5">5×</option><option value="10" selected>10×</option><option value="30">30×</option><option value="60">60×</option></select>
+          </div>
+          <label class="caption"><input type="checkbox" id="m-follow"> Follow the scout (zoomed in on its camera view)</label><br>
+          <label class="caption"><input type="checkbox" id="m-realcam" checked> Move the real camera with the run: tilt and zoom on the SOS (camera only, through the GCS)</label>
+          <ul id="m-status" class="mstatus" aria-label="Each drone now"></ul>
+        </section>
+        <section class="card"><h2>Mission summary</h2><dl class="facts" id="m-summary"></dl><ul id="m-warn" class="warnlist"></ul></section>
+        <section class="card"><details><summary>Planning settings (speeds, heights, battery)</summary>
+          <div class="params" id="m-params"></div><button id="m-replan">Re-plan with these settings</button></details></section>
+        <section class="card"><h2>Mission log</h2><ul id="m-log" class="loglist"></ul></section>
+      </div>
+    </div>
+    <section class="card"><h2>Flight plan per drone</h2><div id="m-plans" class="plans"></div></section>
   </div>
   <footer id="foot"></footer>
 </div>
@@ -173,15 +283,26 @@ const marks = new Map(), lines = new Map(), circles = new Map();
 const icon = (cls, text, dx = 0) => L.divIcon({ className: "", html: `<div class="pin ${cls}">${text}</div>`, iconSize: [38, 30],
                                         iconAnchor: cls.startsWith("sos") ? [19, 50] : cls === "scout" || cls === "relay" ? [19, -20] :
                                                     cls === "plan" ? [19, 15] : [15 - dx, 15] });
-function setTiles(st) {
-  // From the GCS's offline cache while it answers; otherwise straight from the internet, if this laptop has it.
-  const viaGcs = st.gcs && !st.scout_error, sat = layer === "sat";
+let gcsTilesBad = false, tileErrors = 0;
+function tileSpec(st) {
+  // From the GCS's offline cache while it answers and has the area; otherwise the real map straight from the internet.
+  const viaGcs = st.gcs && !st.scout_error && !gcsTilesBad, sat = layer === "sat";
   const url = viaGcs ? `${st.gcs.base}/tiles/${sat ? "sat" : "streets"}/{z}/{x}/{y}`
             : sat ? "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
                   : "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
-  if (tiles?.options.src === url) return;
+  return { url, viaGcs, attribution: (sat ? "Imagery © Esri" : "© OpenStreetMap contributors") + (viaGcs ? ", via the GCS tile cache" : "") };
+}
+function tileLayer(t) {
+  // The GCS cache may not have this area (or may not serve tiles at all): after a few failures use the internet map.
+  return L.tileLayer(t.url, { maxZoom: 19, src: t.url, attribution: t.attribution }).on("tileerror", () => {
+    if (t.viaGcs && ++tileErrors >= 4 && !gcsTilesBad) { gcsTilesBad = true; if (lastSt) { setTiles(lastSt); setMissionTiles(lastSt); } }
+  });
+}
+function setTiles(st) {
+  const t = tileSpec(st);
+  if (tiles?.options.src === t.url) return;
   tiles?.remove();
-  tiles = L.tileLayer(url, { maxZoom: 19, src: url, attribution: (sat ? "Imagery © Esri" : "© OpenStreetMap contributors") + (viaGcs ? ", via the GCS tile cache" : "") }).addTo(map);
+  tiles = tileLayer(t).addTo(map);
 }
 function put(key, pos, cls, text, tip, dx) {  // create or move one marker
   let m = marks.get(key);
@@ -212,7 +333,7 @@ function drawMap(st) {
   for (const n of [me, ...st.nodes].filter(hasPos)) groups.set(spot(n), [...(groups.get(spot(n)) ?? []), n.name]);
   const dx = n => { const g = groups.get(spot(n)); return (g.indexOf(n.name) - (g.length - 1) / 2) * 34; };
   if (hasPos(me)) put("node:" + me.name, me, "hq " + (st.link ? "ONLINE" : "UNKNOWN"), me.name,
-                      `Node ${me.name}, HQ: this feed. Position: ${posSrc(me.pos_src)}`, dx(me));
+                      `Node ${me.name}${me.name === "C" ? ", HQ" : " (not the HQ)"}: this feed. Position: ${posSrc(me.pos_src)}`, dx(me));
   for (const n of st.nodes) {
     if (!hasPos(n)) continue;
     put("node:" + n.name, n, n.status, n.name, `Node ${n.name}: ${STATUS[n.status][1]}, heard ${dur(n.age_ms / 1000)} ago, ${n.rssi} dBm`, dx(n));
@@ -271,7 +392,16 @@ function drawScout(st) {
     if (cam) { if (cam.live) $("video-note").classList.remove("show"); else showVideoNote("Camera: " + cam.error + ". Is the Jetson on and its cable in?"); }
   } else showVideoNote("No video: start the control room with --camera rtsp://… (or --gcs http://localhost:8765)");
   const target = st.messages.find(m => m.scout_sent && !m.handled && hasPos(m));
+  // The camera rule on the real scout: tilt for its height and its distance to the SOS (or the newest open SOS).
+  const aimAt = target || st.messages.find(m => m.sos && !m.handled && hasPos(m));
+  const camNow = sc && hasPos(sc) && sc.alt_m != null && sc.alt_m >= 1 && aimAt
+    ? cameraView({ lat: sc.lat, lon: sc.lon, alt: sc.alt_m }, aimAt, camParams().keep, camParams().fov) : null;
+  if (camNow && $("autocam").checked && sc.connected) sendCamera(camNow);
+  $("autocam").disabled = !g;
+  $("m-realcam").disabled = !g;
+  renderCamera(st);
   const facts = sc ? [["Mode", sc.mode ?? "–"], ["Height", sc.alt_m == null ? "–" : sc.alt_m.toFixed(0) + " m"], ["Battery", sc.battery_pct == null ? "–" : sc.battery_pct + " %"],
+                      ["Camera", camNow ? `${camNow.pitch.toFixed(1)}° ${camNow.zoom.toFixed(1)}× (${$("autocam").checked ? "auto" : "suggested"})` : "–"],
                       ["Position", hasPos(sc) ? fmtPos(sc) : "no GPS fix"],
                       ["To target", target && hasPos(sc) ? fmtDist(distM(sc, target)) + ` (#${target.id})` : "no target"]]
                    : [["Scout", st.scout_error || "no GCS"]];
@@ -316,7 +446,9 @@ function drawMessages(st) {
       done.onclick = () => post("/api/handled", m.key);
       const center = el("button", { textContent: "Show on map", disabled: !hasPos(m) });
       center.onclick = () => map.setView([m.lat, m.lon], 17);
-      acts.append(go, center, done);
+      const planIt = el("button", { textContent: "Plan mission", disabled: !m.sos || !hasPos(m) });
+      planIt.onclick = () => { mKey = m.key; showView("mission"); planMission(); };
+      acts.append(go, planIt, center, done);
     }
     return el("li", { className: "msg" + (m.sos ? " sos" : "") + (m.handled ? " done" : "") },
       el("div", { className: "top" }, el("span", { className: "badge" }, m.sos ? "SOS" : m.category.toUpperCase()),
@@ -422,7 +554,7 @@ $("locate").onclick = () => navigator.geolocation.getCurrentPosition(
 /* ---------- nodes, log, alerts ---------- */
 function drawNodes(st) {
   const me = st.self, rows = [];
-  if (me.name) rows.push([me.name + " (HQ)", st.link ? STATUS.ONLINE : STATUS.UNKNOWN, st.link ? "this feed" : "–", "–", "–",
+  if (me.name) rows.push([me.name + (me.name === "C" ? " (HQ)" : " (this feed)"), st.link ? STATUS.ONLINE : STATUS.UNKNOWN, st.link ? "this feed" : "–", "–", "–",
                           hasPos(me) ? posSrc(me.pos_src) : "none"]);
   for (const n of st.nodes) rows.push([n.name, STATUS[n.status], dur(n.age_ms / 1000) + " ago", n.via === n.name ? "direct" : "via " + n.via,
                                        `${n.rssi} dBm, SNR ${n.snr} dB · ${n.received_pct} % heard`, hasPos(n) ? (hasPos(me) ? fmtDist(distM(me, n)) + " from HQ" : "yes") + (n.pos_src ? ", " + posSrc(n.pos_src) : "") : "none"]);
@@ -459,6 +591,8 @@ function newEvents(st) {
 function drawAlert(st) {
   const sos = st.messages.filter(m => m.sos && !m.handled), off = st.nodes.filter(n => n.status === "OFFLINE"), parts = [];
   if (sos.length) parts.push(`🆘 ${sos.length} SOS waiting. Newest: #${sos[0].id} through node ${sos[0].node}: “${sos[0].text}”${sos[0].landmark ? " at " + sos[0].landmark : ""}`);
+  if (st.link && st.self.name && st.self.name !== "C")  // messages reach this laptop only from the HQ's USB port
+    parts.push(`✕ This feed is node ${st.self.name}, not the HQ: new messages are delivered to node C but cannot show here. Plug node C into this laptop by USB and restart the control room.`);
   if (!st.link) parts.push(`✕ No feed from node C: ${st.error}. The control room hears every other node through node C, so they all show as unknown until it is back. They may still be running.`);
   if (off.length) parts.push("✕ " + off.map(n => `Node ${n.name} OFFLINE, silent ${dur(n.age_ms / 1000)}`).join(", "));
   const text = parts.join("   ·   ");
@@ -470,8 +604,463 @@ function drawAlert(st) {
 function render(st) {
   $("feed").replaceChildren(el("span", { className: st.link ? "good" : "crit" }, st.link ? "●" : "✕"),
                             st.link ? ` Node ${st.self.name} feed, ${st.url}` : " No feed from node C");
+  lastSt = st;
   drawAlert(st); drawMap(st); drawScout(st); drawPlace(st); drawPlan(st); drawMessages(st); drawNodes(st); drawLog(st.events); newEvents(st);
+  drawMissionSos(st);
+  if (!$("view-mission").hidden) setMissionTiles(st);
   $("foot").textContent = `Heartbeats saved to ${st.csv}. Messages and what was done about them are kept on this laptop, so a restart of node C loses nothing here.`;
+}
+
+
+/* ---------- mission planner: VIRTUAL, nothing is sent to any drone ---------- */
+const PARAMS = [["scout_speed", "Scout speed", "m/s"], ["relay_speed", "Relay speed", "m/s"], ["scout_alt", "Scout height", "m"],
+  ["relay_alt", "Lowest relay height", "m"], ["layer", "Height gap between drones", "m"], ["climb", "Climb rate", "m/s"],
+  ["descend", "Descent rate", "m/s"], ["loiter_min", "Time over the SOS", "min"], ["stagger_s", "Gap between launches", "s"],
+  ["scout_endurance_min", "Scout flight time", "min"], ["relay_endurance_min", "Relay flight time", "min"], ["reserve_pct", "Battery reserve", "%"],
+  ["cam_keep_m", "Camera: keep this much of the site in view", "m"], ["cam_fov", "Camera field of view at 1× zoom", "°"]];
+const PHASE_COLOR = { "waiting to launch": "--grid", "climbing": "--axis", "flying out": "--series", "on station": "--good",
+  "watching the SOS site": "--scout", "flying home": "--series", "landing": "--axis" };
+const svgEl = (tag, attrs, text) => {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text != null) e.textContent = text;
+  return e;
+};
+let lastSt = null, mission = null, mKey = "", mParams = {}, knownSos = null, autoArm = false;
+const sim = { t: 0, running: false, armed: false, last: 0 };
+let mmap = null, mtiles = null, mStatic = [], mLinks = [];
+const mTrails = new Map();
+const DEG = Math.PI / 180;
+// The camera stays on the SOS site the whole mission: tilt from the drone's height and ground distance to it
+// (0 on the pad, -90 straight over it). Same rules as the server's gimbal_pitch and camera_zoom. The scout keeps
+// its nose on the site (like ArduPilot's region of interest), so the camera never pans.
+const gimbalPitch = (alt, ground) => -Math.min(90, Math.atan2(Math.max(alt, 0), Math.max(ground, 0)) / DEG);
+// Zoom that keeps about `keep` metres around the site in view, 1-10x (the ZR10's optical range).
+const cameraZoom = (alt, ground, fov, keep) => Math.min(10, Math.max(1, 2 * Math.hypot(alt, ground) * Math.tan(fov / 2 * DEG) / keep));
+const offsetM = (p, north, east) => ({ lat: p.lat + north / 111195, lon: p.lon + east / (111195 * Math.cos(p.lat * DEG)) });
+function bearingTo(a, b) {
+  const y = Math.sin((b.lon - a.lon) * DEG) * Math.cos(b.lat * DEG);
+  const x = Math.cos(a.lat * DEG) * Math.sin(b.lat * DEG) - Math.sin(a.lat * DEG) * Math.cos(b.lat * DEG) * Math.cos((b.lon - a.lon) * DEG);
+  return Math.atan2(y, x);
+}
+function cameraView(p, site, keep, fov) {
+  const ground = distM(p, site), pitch = gimbalPitch(p.alt, ground), zoom = cameraZoom(p.alt, ground, fov, keep);
+  const radius = Math.max(1, Math.hypot(p.alt, ground) * Math.tan(fov / zoom / 2 * DEG));
+  const mode = ground < 3 ? "straight down over the SOS site" : `on the SOS site ${fmtDist(ground)} away`;
+  return { pitch, zoom, aim: site, radius, bearing: bearingTo(p, site), ground, mode };
+}
+// Camera commands, the same ones as the GCS's Vision page, through the GCS to S-01's Jetson. Camera only, never
+// a flight command. Moving the camera by hand pauses the automatic camera for 10 s.
+const SIYI_YAW_RIGHT = -1;  // a hanging ZR10's SIYI yaw is + to the left; here + is right, as in the GCS
+const HAND_PAUSE_MS = 10000;
+let camHandAt = 0, camRec = false, camAim = false;
+async function camCmd(cmd, byHand = true) {
+  if (byHand) camHandAt = Date.now();
+  const r = await fetch("/api/camera", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cmd) }).catch(() => null);
+  const err = r?.ok ? "" : ((r && (await r.json().catch(() => ({}))).error) || "the control room is not answering");
+  $("cam-say").textContent = err && `Camera ${cmd.type} not sent: ${err}`;
+  return !err;
+}
+// The automatic camera (only when switched on): at most twice a second, the tilt when it moves 0.5°, the zoom 0.3×.
+let camSent = null, camAt = 0;
+async function sendCamera(cam) {
+  if (Date.now() - camHandAt < HAND_PAUSE_MS) return;
+  const tilt = !camSent || Math.abs(cam.pitch - camSent.pitch) >= 0.5, zoom = !camSent || Math.abs(cam.zoom - camSent.zoom) >= 0.3;
+  if (Date.now() - camAt < 500 || !(tilt || zoom)) return;
+  camAt = Date.now();
+  camSent = { pitch: tilt ? cam.pitch : camSent.pitch, zoom: zoom ? cam.zoom : camSent.zoom };
+  const ok = (!tilt || await camCmd({ type: "gimbal", yaw: 0, pitch: Math.round(cam.pitch * 10) / 10 }, false))
+          && (!zoom || await camCmd({ type: "zoom", level: Math.round(cam.zoom * 10) / 10 }, false));
+  if (!ok) camSent = null;  // try again next time
+}
+// The hand controls
+const showSlider = id => {
+  const v = +$(id).value;
+  $(id).nextElementSibling.textContent = id === "c-zoom" ? `${v}×` : id === "c-speed" ? `${v} °/s` : `${v}°`;
+};
+for (const id of ["c-zoom", "c-yaw", "c-pitch", "c-speed"]) {
+  $(id).addEventListener("input", () => { if (id !== "c-speed") camHandAt = Date.now(); showSlider(id); });
+  $(id).addEventListener("change", () => {
+    if (id === "c-zoom") camCmd({ type: "zoom", level: +$(id).value });
+    else if (id !== "c-speed") camCmd({ type: "gimbal", yaw: SIYI_YAW_RIGHT * +$("c-yaw").value, pitch: +$("c-pitch").value });
+  });
+}
+// Hold to move: the command every 250 ms while held, then once with zero on release (as the GCS does).
+function hold(btn, msg, zero) {
+  let t = null;
+  const start = e => { e.preventDefault(); if (t) return; camCmd(msg()); t = setInterval(() => camCmd(msg()), 250); btn.classList.add("held"); };
+  const stop = () => { if (!t) return; clearInterval(t); t = null; btn.classList.remove("held"); camCmd(zero); };
+  btn.addEventListener("pointerdown", e => { btn.setPointerCapture?.(e.pointerId); start(e); });
+  for (const ev of ["pointerup", "pointercancel", "lostpointercapture", "blur"]) btn.addEventListener(ev, stop);
+  btn.addEventListener("keydown", e => { if ((e.key === " " || e.key === "Enter") && !e.repeat) start(e); });
+  btn.addEventListener("keyup", e => { if (e.key === " " || e.key === "Enter") stop(); });
+}
+document.querySelectorAll("[data-pad]").forEach(btn => {
+  const [dx, dy] = btn.dataset.pad.split(",").map(Number);  // camera frame: + yaw = right, + pitch = up
+  hold(btn, () => ({ type: "gimbal_rate", yaw: dx * +$("c-speed").value, pitch: dy * +$("c-speed").value }), { type: "gimbal_rate", yaw: 0, pitch: 0 });
+});
+document.querySelectorAll("[data-focus]").forEach(btn => hold(btn, () => ({ type: "focus_rate", dir: +btn.dataset.focus }), { type: "focus_rate", dir: 0 }));
+document.querySelectorAll("[data-cam]").forEach(btn => btn.onclick = () => {
+  const act = btn.dataset.cam;
+  if (act === "zoom+" || act === "zoom-") {
+    $("c-zoom").value = Math.min(30, Math.max(1, +$("c-zoom").value + (act === "zoom+" ? 1 : -1)));
+    showSlider("c-zoom");
+    camCmd({ type: "zoom", level: +$("c-zoom").value });
+  } else if (act === "aim") {
+    camAim = !camAim;
+    btn.setAttribute("aria-pressed", camAim);
+    $("video-wrap").classList.toggle("aiming", camAim);
+  } else if (act === "af") camCmd({ type: "focus", mode: "auto" });
+  else if (act === "record") camCmd({ type: "record", on: !camRec });
+  else camCmd({ type: act });  // center, snapshot
+});
+// Click to aim: the Jetson turns the camera so the clicked spot comes to the middle.
+$("video").addEventListener("click", e => {
+  const img = $("video"), nw = img.naturalWidth, nh = img.naturalHeight;
+  if (!camAim || !nw || !nh) return;
+  const r = img.getBoundingClientRect(), s = Math.min(r.width / nw, r.height / nh), dw = nw * s, dh = nh * s;  // object-fit: contain
+  const x = (e.clientX - r.left - (r.width - dw) / 2) / dw, y = (e.clientY - r.top - (r.height - dh) / 2) / dh;
+  if (x >= 0 && x <= 1 && y >= 0 && y <= 1) camCmd({ type: "aim", x: +x.toFixed(4), y: +y.toFixed(4), aspect: +(nw / nh).toFixed(4) });
+});
+// What the camera reports, every second; the sliders follow it unless moved by hand in the last 3 s.
+function renderCamera(st) {
+  const g = st.gcs, cs = st.camctl, sc = st.scout, hand = Date.now() - camHandAt < HAND_PAUSE_MS;
+  const auto = $("m-realcam").checked && sim.running ? "following the virtual run"
+             : $("autocam").checked && sc?.connected ? "keeping it on the SOS" : "";
+  const pan = cs?.yaw == null ? "?" : Math.abs(cs.yaw) < 0.5 ? "straight ahead" : `${Math.abs(cs.yaw).toFixed(0)}° ${SIYI_YAW_RIGHT * cs.yaw > 0 ? "right" : "left"}`;
+  $("cam-state").textContent = !g ? "Camera controls need the GCS: start the control room with --gcs."
+    : !cs?.online ? `Camera: ${cs?.error || `the GCS does not hear ${g.scout}'s Jetson`}.`
+    : `${g.scout} camera now: tilt ${cs.pitch?.toFixed(1) ?? "?"}°, pan ${pan}, zoom ${cs.zoom ?? "?"}×${cs.recording ? ", recording" : ""}.` +
+      (auto ? (hand ? " Automatic camera paused: moved by hand." : ` Automatic camera: ${auto}.`) : "");
+  camRec = !!cs?.recording;
+  $("c-rec").textContent = camRec ? "■ Stop recording" : "● Record";
+  document.querySelectorAll(".camctl button, .camctl input").forEach(x => { if (x.id !== "c-speed") x.disabled = !g; });
+  if (cs?.online && Date.now() - camHandAt > 3000) {
+    for (const [id, v] of [["c-zoom", cs.zoom], ["c-yaw", cs.yaw == null ? null : SIYI_YAW_RIGHT * cs.yaw], ["c-pitch", cs.pitch]])
+      if (v != null) { $(id).value = v; showSlider(id); }
+  }
+}
+const camParams = () => ({ keep: mParams.cam_keep_m ?? 150, fov: mParams.cam_fov ?? 55 });
+const mMarks = new Map();
+let mEvents = [];
+const fmtT = s => { s = Math.max(0, Math.round(s)); return `T+${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+const micon = (cls, text, dx = 0) => L.divIcon({ className: "", html: `<div class="pin ${cls}">${text}</div>`, iconSize: [46, 30], iconAnchor: [23 - dx, 15] });
+
+function ensureMmap() {
+  if (!mmap) mmap = L.map("mmap", { zoomControl: true }).setView([28.6139, 77.209], 12);
+  return mmap;
+}
+function setMissionTiles(st) {
+  if (!mmap) return;
+  const t = tileSpec(st);
+  if (mtiles?.options.src === t.url) return;
+  mtiles?.remove();
+  mtiles = tileLayer(t).addTo(mmap);
+}
+function showView(name) {
+  $("view-live").hidden = name !== "live";
+  $("view-mission").hidden = name !== "mission";
+  $("tab-live").setAttribute("aria-pressed", name === "live");
+  $("tab-mission").setAttribute("aria-pressed", name === "mission");
+  // one camera card, shown in whichever view is open, so the camera can be watched during a run
+  if (name === "mission") $("m-run").after($("camcard")); else $("live-stack").prepend($("camcard"));
+  if (name === "mission") {
+    $("mission-badge").hidden = true;
+    ensureMmap();
+    if (lastSt) setMissionTiles(lastSt);
+    setTimeout(() => { mmap.invalidateSize(); if (mission) fitMission(); }, 60);
+  } else setTimeout(() => map.invalidateSize(), 60);
+}
+$("tab-live").onclick = () => showView("live");
+$("tab-mission").onclick = () => showView("mission");
+
+// The SOS list; a new SOS is planned at once (unless a run is going on) and flagged on the tab.
+function drawMissionSos(st) {
+  const sos = st.messages.filter(m => m.sos && hasPos(m));
+  const keys = sos.map(m => m.key);
+  if (knownSos === null) knownSos = new Set(keys);
+  const fresh = keys.filter(k => !knownSos.has(k));
+  fresh.forEach(k => knownSos.add(k));
+  if (fresh.length && $("view-mission").hidden) { $("mission-badge").textContent = "new SOS"; $("mission-badge").hidden = false; }
+  const label = m => `#${m.id} · node ${m.node} · ${m.received_at.slice(11)}${m.handled ? " · handled" : ""}${m.text ? " · " + m.text.slice(0, 24) : ""}`;
+  const sig = sos.map(m => m.key + (m.handled ? "h" : "")).join();
+  if ($("m-sos").dataset.sig !== sig) {
+    $("m-sos").dataset.sig = sig;
+    $("m-sos").replaceChildren(...(sos.length ? sos.map(m => el("option", { value: m.key }, label(m)))
+                                              : [el("option", { value: "" }, "no SOS with a position yet")]));
+  }
+  // Plan the newest SOS that just arrived; otherwise keep the one chosen, or take the newest still open.
+  const newest = sos.find(m => !m.handled) || sos[0];
+  const pick = sim.armed ? null : fresh.length ? fresh[0] : (!mKey || !keys.includes(mKey)) && newest ? newest.key : null;
+  if (pick && pick !== mKey) { mKey = pick; planMission(); }
+  if (mKey) $("m-sos").value = mKey;
+}
+$("m-sos").onchange = () => { mKey = $("m-sos").value; planMission(); };
+
+async function planMission() {
+  if (!mKey) return;
+  readParams();
+  const r = await fetch("/api/mission", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: mKey, params: mParams }) });
+  const j = await r.json().catch(() => ({}));
+  resetRun(false);
+  if (!r.ok) { mission = null; clearMission(j.error || "Could not plan this mission"); return; }
+  mission = j;
+  mParams = { ...j.params };
+  drawMission();
+  fitMission();
+  if (autoArm) { autoArm = false; $("m-speed").value = "60"; armRun(); }
+}
+function readParams() {
+  for (const [k] of PARAMS) { const i = $("mp-" + k); if (i && i.value !== "") mParams[k] = Number(i.value); }
+}
+$("m-replan").onclick = planMission;
+
+function clearMission(text) {
+  ensureMmap();
+  [...mStatic, ...mLinks, ...mMarks.values()].forEach(l => l.remove());
+  mStatic = []; mLinks = []; mMarks.clear();
+  $("m-title").textContent = "Mission";
+  $("m-summary").replaceChildren();
+  $("m-warn").replaceChildren(el("li", {}, "✕ " + text));
+  $("m-plans").replaceChildren(); $("m-status").replaceChildren(); $("m-timeline").replaceChildren(); $("m-mesh").textContent = "";
+  $("m-arm").disabled = true;
+}
+
+function drawMission() {
+  ensureMmap();
+  [...mStatic, ...mLinks, ...mMarks.values()].forEach(l => l.remove());
+  mStatic = []; mLinks = []; mMarks.clear();
+  const M = mission, add = l => { mStatic.push(l.addTo(mmap)); return l; };
+  add(L.polyline([[M.hq.lat, M.hq.lon], [M.site.lat, M.site.lon]], { color: css("--scout"), weight: 2, opacity: .7, dashArray: "4 8", interactive: false }));
+  add(L.circle([M.site.lat, M.site.lon], { radius: M.radius_m || 50, color: css("--crit"), weight: 2, fillOpacity: .12, interactive: false }));
+  add(L.marker([M.site.lat, M.site.lon], { icon: micon("sos", "SOS"), keyboard: false })).bindTooltip(`SOS #${M.sos_id}: the site`);
+  add(L.marker([M.hq.lat, M.hq.lon], { icon: micon("home", "HQ"), keyboard: false })).bindTooltip(`HQ and launch point (${M.hq.source ?? "?"})`);
+  for (const d of M.drones.filter(d => d.role === "relay")) {
+    add(L.circle([d.hover.lat, d.hover.lon], { radius: M.range_m, color: css("--series"), weight: 1, opacity: .45, fillOpacity: .03, dashArray: "4 6", interactive: false }));
+    add(L.marker([d.hover.lat, d.hover.lon], { icon: micon("station", d.station), keyboard: false })).bindTooltip(`Relay station ${d.station}: ${d.id} hovers here at ${d.alt} m`);
+  }
+  mTrails.clear();
+  for (const d of M.drones) {
+    const color = css(d.role === "scout" ? "--scout" : "--series");
+    add(L.polyline([[M.hq.lat, M.hq.lon], [d.hover.lat, d.hover.lon]], { color, weight: 2, opacity: .9, dashArray: "2 7", interactive: false }))
+      .bindTooltip(`${d.id}: planned path, ${fmtDist(d.distance_m)} each way at ${d.alt} m`);
+    mTrails.set(d.id, add(L.polyline([], { color, weight: 4, opacity: .95, interactive: false })));
+  }
+  M.drones.forEach((d, i) => {
+    const m = L.marker([M.hq.lat, M.hq.lon], { keyboard: false }).addTo(mmap);
+    m.bindTooltip("", { direction: "top", offset: [0, -14] });
+    m.idx = i;
+    mMarks.set(d.id, m);
+  });
+  const relays = M.drones.filter(d => d.role === "relay").length;
+  $("m-title").textContent = `Mission for SOS #${M.sos_id} · ${fmtDist(M.distance_m)} · ${relays} relay drone${relays === 1 ? "" : "s"} + scout`;
+  mEvents = buildEvents();
+  drawSummary(); drawPlans(); drawTimeline(); drawParams(); updateRun();
+  $("m-arm").disabled = false;
+}
+function fitMission() {
+  if (!mission || !mmap) return;
+  const b = L.latLngBounds([[mission.hq.lat, mission.hq.lon], [mission.site.lat, mission.site.lon]]);
+  mmap.fitBounds(b.pad(0.35), { maxZoom: 17, animate: false });
+}
+
+function drawSummary() {
+  const M = mission, facts = [
+    ["Distance HQ → SOS", fmtDist(M.distance_m)],
+    ["Relay drones needed", `${M.relays_needed} (have ${M.relays_available})`],
+    ["Each hop", `${fmtDist(M.hop_m)} of ${fmtDist(M.range_m)} range`],
+    ["Scout over the SOS", fmtT(M.scout_over_s)],
+    ["Mesh HQ ↔ SOS linked", M.mesh_up_s == null ? "never" : fmtT(M.mesh_up_s)],
+    ["Scout in the mesh", M.scout_gap_s == null ? "the whole way" : "out of reach from " + fmtT(M.scout_gap_s)],
+    ["Whole mission", fmtT(M.end_s)],
+    ["Highest battery use", Math.max(...M.drones.map(d => d.battery_pct)) + " %"]];
+  $("m-summary").replaceChildren(...facts.map(([k, v]) => el("div", {}, el("dt", {}, k), el("dd", {}, v))));
+  $("m-warn").replaceChildren(...(M.warnings.length ? M.warnings.map(w => el("li", {}, "⚠ " + w))
+    : [el("li", { className: "ok" }, "✓ Every drone is within its battery reserve and height limit, and the mesh reaches the SOS site.")]));
+}
+function battColor(pct) { const lim = 100 - mission.params.reserve_pct; return pct > lim ? css("--crit") : pct > lim - 15 ? css("--warn") : css("--good"); }
+function drawPlans() {
+  $("m-plans").replaceChildren(...mission.drones.map(d => {
+    const head = d.role === "scout" ? `${d.id} · scout` : `${d.id} · relay for station ${d.station}`;
+    const sub = `${d.node ? "carries node " + d.node : d.virtual ? "virtual: needs a drone and a node" : "no node"} · ${d.alt} m · ${d.speed} m/s · ${fmtDist(d.distance_m)} each way · launches ${fmtT(d.launch_s)}`;
+    const rows = d.waypoints.map(w => el("tr", {}, el("td", {}, fmtT(w.t)), el("td", {}, w.label), el("td", {}, w.alt + " m"), el("td", {}, w.lat.toFixed(5) + ", " + w.lon.toFixed(5))));
+    return el("div", { className: "plan-card" }, el("h3", {}, head), el("div", { className: "caption" }, sub),
+      el("div", { className: "batt", title: "battery used" }, Object.assign(el("div"), { style: `width:${Math.min(100, d.battery_pct)}%;background:${battColor(d.battery_pct)}` })),
+      el("div", { className: "caption" }, `Battery: ${d.battery_pct} % of a full charge, ${dur(d.flight_s)} in the air`),
+      el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "When"), el("th", {}, "Event"), el("th", {}, "Height"), el("th", {}, "Position"))), el("tbody", {}, ...rows)));
+  }));
+}
+function drawParams() {
+  if ($("m-params").childElementCount) { for (const [k] of PARAMS) $("mp-" + k).value = mission.params[k]; return; }
+  $("m-params").replaceChildren(...PARAMS.map(([k, label, unit]) =>
+    el("label", { htmlFor: "mp-" + k }, `${label} (${unit})`, el("input", { id: "mp-" + k, type: "number", step: "any", value: mission.params[k] }))));
+}
+function niceStep(end) { return [30, 60, 120, 300, 600, 900].find(s => end / s <= 10) || 1800; }
+function drawTimeline() {
+  const M = mission, W = 760, rowH = 24, top = 22, left = 112, right = 12, H = top + rowH * M.drones.length + 10;
+  const x = t => left + (W - left - right) * t / M.end_s, g = $("m-timeline");
+  g.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const parts = [];
+  for (let t = 0, step = niceStep(M.end_s); t <= M.end_s; t += step)
+    parts.push(svgEl("line", { x1: x(t), x2: x(t), y1: top - 4, y2: H - 6, stroke: css("--grid") }), svgEl("text", { x: x(t), y: 12, "text-anchor": "middle" }, fmtT(t)));
+  M.drones.forEach((d, i) => {
+    const y = top + i * rowH, w = d.waypoints;
+    parts.push(svgEl("text", { x: 4, y: y + 15, class: "rowlabel" }, d.id.replace(" (virtual)", "*")));
+    for (let k = 0; k + 1 < w.length; k++) {
+      if (w[k + 1].t <= w[k].t) continue;
+      const r = svgEl("rect", { x: x(w[k].t), y: y + 3, width: Math.max(1, x(w[k + 1].t) - x(w[k].t)), height: rowH - 8, rx: 3,
+                                fill: css(PHASE_COLOR[d.phases[k]] || "--axis"), opacity: d.virtual ? .55 : 1 });
+      r.append(svgEl("title", {}, `${d.id}: ${d.phases[k]}, ${fmtT(w[k].t)} to ${fmtT(w[k + 1].t)}`));
+      parts.push(r);
+    }
+  });
+  if (M.mesh_up_s != null) parts.push(svgEl("line", { x1: x(M.mesh_up_s), x2: x(M.mesh_up_s), y1: top - 4, y2: H - 6, stroke: css("--good"), "stroke-width": 2, "stroke-dasharray": "4 3" }));
+  parts.push(svgEl("line", { id: "m-cursor", x1: left, x2: left, y1: top - 6, y2: H - 4, stroke: css("--crit"), "stroke-width": 2 }));
+  g.replaceChildren(...parts);
+  $("m-legend").textContent = "Timeline: grey waiting · light climbing / landing · blue flying · green relay on station · purple scout over the SOS. " +
+    "Dashed green line: the mesh links HQ and SOS site. * = virtual drone (no drone or node for it yet).";
+}
+
+// Where everyone is at sim.t; the radio links that exist right now; the drone list and the clock.
+function posAt(w, t) {
+  if (t <= w[0].t) return w[0];
+  for (let i = 1; i < w.length; i++) if (t <= w[i].t) {
+    const a = w[i - 1], b = w[i], f = b.t > a.t ? (t - a.t) / (b.t - a.t) : 1;
+    return { lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f, alt: a.alt + (b.alt - a.alt) * f };
+  }
+  return w[w.length - 1];
+}
+function phaseAt(d, t) {
+  if (!sim.armed) return "on the pad, ready";
+  const w = d.waypoints;
+  for (let i = 1; i < w.length; i++) if (t < w[i].t) return d.phases[i - 1];
+  return "landed";
+}
+function updateRun() {
+  if (!mission) return;
+  const M = mission, t = sim.t, pos = new Map();
+  for (const d of M.drones) pos.set(d.id, posAt(d.waypoints, t));
+  // drones within 25 m of each other (on the pad, or flying the shared corridor) are drawn side by side
+  const spread = new Map();
+  for (const d of M.drones) {
+    const group = M.drones.filter(e => distM(pos.get(e.id), pos.get(d.id)) < 25);
+    spread.set(d.id, (group.indexOf(d) - (group.length - 1) / 2) * 50);
+  }
+  for (const d of M.drones) {
+    const p = pos.get(d.id), ph = phaseAt(d, t), m = mMarks.get(d.id), dx = spread.get(d.id);
+    const cls = "drone" + (d.role === "scout" ? " scoutd" : "") + (d.virtual ? " virtual" : "");
+    m.setLatLng([p.lat, p.lon]).setIcon(micon(cls, d.id.replace(" (virtual)", "*"), dx));
+    m.setTooltipContent(`${d.id}: ${ph}, ${Math.round(p.alt)} m`);
+    const flown = sim.armed ? [...d.waypoints.filter(w => w.t <= t), p].map(w => [w.lat, w.lon]) : [];
+    mTrails.get(d.id)?.setLatLngs(flown);
+  }
+  // The mesh, as the planner counts it: HQ, SOS site and the relays; a radio link wherever two are within range.
+  const members = [{ id: "HQ", p: M.hq }, { id: "SOS site", p: M.site },
+                   ...M.drones.filter(d => d.role === "relay").map(d => ({ id: d.id.replace(" (virtual)", "*"), p: pos.get(d.id) }))];
+  const near = (a, b) => distM(a, b) <= M.range_m;
+  const reach = new Set([0]), todo = [0];
+  while (todo.length) { const i = todo.pop(); members.forEach((b, j) => { if (!reach.has(j) && near(members[i].p, b.p)) { reach.add(j); todo.push(j); } }); }
+  const edges = [];
+  for (const i of reach) for (const j of reach) if (i < j && near(members[i].p, members[j].p) && distM(members[i].p, members[j].p) > 5) edges.push([members[i].p, members[j].p]);
+  const scout = M.drones.find(d => d.role === "scout"), sp = pos.get(scout.id);
+  const scoutLink = [...reach].map(i => members[i].p).filter(q => near(q, sp)).sort((a, b) => distM(a, sp) - distM(b, sp))[0];
+  mLinks.forEach(l => l.remove());
+  mLinks = edges.map(([a, b]) => L.polyline([[a.lat, a.lon], [b.lat, b.lon]], { color: css("--good"), weight: 2, opacity: .7, interactive: false }).addTo(mmap));
+  if (scoutLink && distM(scoutLink, sp) > 5)
+    mLinks.push(L.polyline([[scoutLink.lat, scoutLink.lon], [sp.lat, sp.lon]], { color: css("--scout"), weight: 2, opacity: .8, dashArray: "3 5", interactive: false }).addTo(mmap));
+  for (const tr of mTrails.values()) tr.bringToFront();  // the paths flown stay visible above the radio links
+  // From ARM to touchdown the camera stays on the SOS site: on the pad, climbing, in transit, overhead, flying home.
+  const { keep, fov } = camParams(), airborne = sp.alt >= 1;
+  const cam = sim.armed && phaseAt(scout, t) !== "landed" ? cameraView(sp, M.site, keep, fov) : null;
+  if ($("m-follow").checked && sim.armed && airborne) mmap.setView([sp.lat, sp.lon], Math.max(mmap.getZoom(), 16), { animate: false });
+  if (cam) {
+    const side = q => offsetM(cam.aim, q * cam.radius * Math.cos(cam.bearing + Math.PI / 2), q * cam.radius * Math.sin(cam.bearing + Math.PI / 2));
+    const look = { color: css("--scout"), weight: 2, opacity: .95, fillOpacity: .25, interactive: false };
+    if (cam.ground >= 3) mLinks.push(L.polygon([[sp.lat, sp.lon], [side(1).lat, side(1).lon], [side(-1).lat, side(-1).lon]], look).addTo(mmap));
+    mLinks.push(L.circle([cam.aim.lat, cam.aim.lon], { ...look, radius: cam.radius, fillOpacity: .35 }).addTo(mmap));
+    if ($("m-realcam").checked && sim.running) sendCamera(cam);
+  }
+  const linked = reach.has(1);
+  const via = [...reach].filter(i => i > 1).map(i => members[i].id);
+  $("m-mesh").replaceChildren(el("span", { className: linked ? "good" : "muted" }, linked ? "● " : "○ "),
+    (linked ? `Mesh: HQ ↔ SOS site linked${via.length ? " through " + via.join(", ") : " directly"}.`
+            : `Mesh: HQ ↔ SOS site not linked yet (${fmtDist(M.distance_m)} apart, range ${fmtDist(M.range_m)}).`) +
+    ` Scout: ${scoutLink ? "in the mesh" : "out of reach"}. ` +
+    (cam ? `Camera on the SOS site: tilt ${cam.pitch.toFixed(1)}°, zoom ${cam.zoom.toFixed(1)}×, ${cam.mode}, sees about ${fmtDist(2 * cam.radius)} across.`
+         : "Camera: parked until ARM."));
+  // clock, cursor, list of drones
+  $("m-clock").textContent = `${fmtT(t)} / ${fmtT(M.end_s).slice(2)}`;
+  const c = $("m-cursor");
+  if (c) { const W = 760, left = 112, right = 12, xx = left + (W - left - right) * t / M.end_s; c.setAttribute("x1", xx); c.setAttribute("x2", xx); }
+  $("m-status").replaceChildren(...M.drones.map(d => {
+    const p = pos.get(d.id), ph = phaseAt(d, t), color = css(PHASE_COLOR[ph] || (ph === "landed" ? "--good" : "--muted"));
+    const used = sim.armed ? Math.round(d.battery_pct * Math.max(0, Math.min(t, d.land_s) - d.launch_s) / d.flight_s) : 0;
+    return el("li", {}, el("strong", {}, d.id.replace(" (virtual)", "*")),
+      el("span", {}, el("span", { className: "dot", style: `background:${color}` }), ph),
+      el("span", { className: "caption" }, `${Math.round(p.alt)} m${d.role === "scout" && cam ? ` · camera ${cam.pitch.toFixed(1)}° ${cam.zoom.toFixed(1)}×` : ""} · battery ${used} %`));
+  }));
+}
+function logM(text, t = sim.t) {
+  $("m-log").prepend(el("li", {}, el("time", {}, fmtT(t)), el("span", {}, text)));
+}
+// Every event of the mission, at the time the planner gave it, so none is missed whatever the speed or frame rate.
+function buildEvents() {
+  const ev = [];
+  for (const d of mission.drones) {
+    const w = d.waypoints, name = d.id.replace(" (virtual)", "*"), where = d.role === "scout" ? "the SOS site" : "station " + d.station;
+    const say = { "climbing": `lifts off, climbing to ${d.alt} m`, "flying out": `flying out to ${where} at ${d.alt} m`,
+      "on station": `on station ${d.station} at ${d.alt} m, relaying`, "watching the SOS site": `over the SOS site at ${d.alt} m: camera on the scene`,
+      "flying home": "leaves, flying home", "landing": "over home, landing" };
+    for (let k = 1; k + 1 < w.length; k++) if (w[k + 1].t > w[k].t && say[d.phases[k]]) ev.push({ t: w[k].t, text: `${name}: ${say[d.phases[k]]}` });
+    ev.push({ t: w[w.length - 1].t, text: `${name}: landed` });
+  }
+  if (mission.mesh_up_s != null) ev.push({ t: mission.mesh_up_s, text: "Mesh linked: HQ ↔ SOS site, every hop within range." });
+  if (mission.scout_gap_s != null) ev.push({ t: mission.scout_gap_s, text: `${mission.drones[0].id} goes out of reach of the mesh.` });
+  return ev.sort((a, b) => a.t - b.t);
+}
+function updateButtons() {
+  $("m-arm").disabled = !mission || sim.armed;
+  $("m-pause").disabled = !sim.armed || sim.t >= (mission?.end_s ?? 0);
+  $("m-pause").textContent = sim.armed && !sim.running ? "Resume" : "Pause";
+  $("m-reset").disabled = !sim.armed;
+  $("m-sos").disabled = $("m-replan").disabled = sim.armed && sim.running;
+}
+function armRun() {
+  if (!mission) return;
+  resetRun(false);
+  sim.armed = sim.running = true;
+  camSent = null; camHandAt = 0;  // the real camera starts following at once
+  sim.last = performance.now();
+  const relays = mission.drones.filter(d => d.role === "relay").sort((a, b) => a.launch_s - b.launch_s);
+  logM(`ARMED (virtual). ${mission.drones[0].id} lifts off first${relays.length ? "; relays every " + mission.params.stagger_s + " s, farthest station first: " + relays.map(d => d.id.replace(" (virtual)", "*")).join(", ") : ""}.`);
+  mEvents.filter(e => e.t <= 0).forEach(e => logM(e.text, e.t));
+  updateButtons();
+}
+function resetRun(keepLog = true) {
+  sim.t = 0; sim.running = sim.armed = false;
+  if (!keepLog) $("m-log").replaceChildren();
+  updateButtons();
+  if (mission) updateRun();
+}
+$("m-arm").onclick = armRun;
+$("m-pause").onclick = () => { sim.running = !sim.running; sim.last = performance.now(); updateButtons(); };
+$("m-reset").onclick = () => { resetRun(false); logM("Reset: every drone back on the pad."); };
+function frame(now) {
+  if (mission && sim.running) {
+    const before = sim.t;
+    sim.t = Math.min(mission.end_s, sim.t + (now - sim.last) / 1000 * Number($("m-speed").value));
+    mEvents.filter(e => e.t > before && e.t <= sim.t).forEach(e => logM(e.text, e.t));
+    if (sim.t >= mission.end_s) { sim.running = false; logM("Mission complete (virtual): every drone has landed."); updateButtons(); }
+    updateRun();
+  }
+  sim.last = now;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+if (location.hash.startsWith("#mission")) {
+  autoArm = location.hash.includes("arm");
+  $("m-follow").checked = location.hash.includes("follow");
+  setTimeout(() => showView("mission"), 0);
 }
 
 let timer = null;

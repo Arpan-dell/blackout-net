@@ -61,7 +61,7 @@ flowchart TD
     M -- "yes, ACK" --> K["mark own message DELIVERED"]
     M -- no --> F{"Hops left?<br/>TTL above 1"}
     F -- no --> X4["drop"]
-    F -- yes --> Q["TTL - 1, queue to relay<br/>after a random 0.1–0.4 s wait"]
+    F -- yes --> Q["TTL - 1, queue to relay<br/>after a random 0.1–0.4 s wait<br/>(replaces an older try still queued;<br/>an ACK passing by cancels it)"]
 ```
 
 ## 4. Main loop of every node
@@ -122,7 +122,8 @@ Three nodes, two of them flying:
   control room over the drones' Wi-Fi.
 - **The control room** is the laptop running the drones' GCS and `tools/control_room.py`: a map of every node,
   every message with where the sender is, the live gimbal camera from the GCS, and a "Send scout here" button
-  that flies S-01 to the sender through the GCS.
+  that flies S-01 to the sender through the GCS. Messages reach it only from node C's USB (on the bench, node C
+  plugged into the laptop); with another node on USB the page shows a red alert.
 
 ```mermaid
 flowchart LR
@@ -176,6 +177,14 @@ flowchart TD
     ROUTE --> SHOW["Map and Drone plan card: hover points, how far each drone<br/>is from its point, 'Fly to plan' and 'Send scout here'<br/>(each confirmed by the operator, flown by the GCS)"]
     WAIT --> SHOW
 ```
+
+**Mission planner tab (virtual).** For any SOS with a position, the control room plans the whole response:
+distance, relay drones needed, each drone's launch time, height layer, route, time on station and battery,
+and when the mesh reaches the site. ARM runs it as a simulation on the real map with a timeline and a log.
+Nothing is sent to any drone; it shows the plan before the nodes are mounted on the drones. From ARM to
+touchdown the scout's camera stays on the SOS site (tilt and zoom from its height and distance); a switch (on
+by default) lets the real ZR10 follow the run, camera commands only. The live camera and its controls (pad,
+zoom, pan, tilt, focus, aim, photo, record, as on the GCS's Vision page) appear under the Run card.
 
 Order in the field: fly the relay drones to their points first ("on station"), then send the scout. If the
 check says node C would lose the mesh on the way, messages wait until it is back in reach.
@@ -344,7 +353,7 @@ Without any hardware: `python tools/control_room.py --mock` runs a fake node C a
 | Item | State |
 |---|---|
 | Phase 1 firmware for A, B and C | uploaded to all three boards (ESP32 and NodeMCU ESP8266, Arduino IDE). Node B checked on the bench: starts, hotspot `BLACKOUT_B` up, hears node A at -38 dBm and relays its heartbeats. End-to-end delivery not yet confirmed |
-| Phase 2 firmware (adaptive SF) | written, all three compile, SF-choice self-check runs at every start; **not yet run on real boards** |
+| Phase 2 firmware (adaptive SF) | running on all three nodes; the HQ switched the network SF9 → SF8 → SF7 by itself. Final build (one copy of a message per queue, ACK cancels leftovers) uploaded to B and C on 15 November, self-test ok, C hears A and B; node A still on the previous phase 2 build until it is plugged in |
 | `pos` USB command, `@NODES`/`@MSG` lines, phone signal (both phases) | written, all six builds compile (PlatformIO and Arduino IDE); position parsing self-checked at every start; **not yet run on real boards** |
 | Adaptive SF test script | written, not yet run (needs the radios) |
 | Phone page (send, HQ inbox, network) | written, checked in a browser against a fake node |

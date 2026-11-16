@@ -93,6 +93,17 @@ Each entry gives what was chosen, what else was considered, and why. The procedu
 - **Instead of:** filtering on origin and message id only.
 - **Why:** a retry has to be relayed again. Filtering on the id alone made the relay throw away every retry.
 
+### One copy of a message per queue; the HQ's ACK cancels leftovers (added 15 November 2026)
+- **Rule:** when a newer try of a message (or a newer ACK for it) reaches a node whose transmit queue still holds
+  an older one, the newer replaces the older in its place in the queue. When an ACK passes a relay, the relay drops
+  any copy of that message still waiting to go out. The HQ already keeps a retried message once in its inbox,
+  prints it once to the control room and ACKs it again; the control room keeps it once. SF-switch announcements
+  are left alone: they go twice on purpose.
+- **Instead of:** relaying every try that arrives. A retry that caught up with the older try still queued (a
+  busy channel, a full air-time budget) put both on the air, and the HQ could send two ACKs.
+- **Why:** with no ACK the sender has to retry, but the network should carry one copy of each message, not one
+  per try. Self-checked at every start (`selftest ok`).
+
 ### Random starting message id at boot
 - **Instead of:** counting from 0 after every reboot, or saving the counter in flash.
 - **Why:** after a reboot, ids starting at 0 would match ids the relay still remembers, and new messages
@@ -325,6 +336,9 @@ Each entry gives what was chosen, what else was considered, and why. The procedu
 - **Instead of:** parsing the human log lines, or the control room polling node C's web API.
 - **Why:** JSON from ArduinoJson carries quotes, Hindi and missing fields safely; the node table is the same
   JSON as `/api/nodes`, so the control room reuses the monitor's tested code. The human log is unchanged.
+- **Only node C prints `@MSG`**, because only the HQ receives the messages. With another node on the laptop's USB
+  the control room still shows the network, but no new messages; the page then shows a red alert saying so
+  (added 15 November 2026, after a swap of boards left node A on node C's old COM port).
 
 ### Control room: a separate page next to the GCS, using the GCS's API
 - **Instead of:** adding a panel inside the GCS, or building video and map serving again.
@@ -358,6 +372,55 @@ Each entry gives what was chosen, what else was considered, and why. The procedu
   pasted as the maps app shows it (`28°44'58.3"N 77°06'53.1"E` or decimal) or clicked on the map. It is kept
   in `messages.jsonl` and used instead of the node's own; a connected drone's live GPS still wins.
 - **Cost:** the node itself does not learn it, so other tools (the phone page, the monitor) do not see it.
+
+### Virtual mission planner for each SOS (added 15 November 2026)
+- **Instead of:** flying the drones now, before the nodes are mounted on them.
+- **Why:** the team wants to show the whole drone response today. The "Mission planner" tab plans one SOS:
+  the distance, the relay drones needed (hops at most 80 % of the link range), each drone's flight with times,
+  heights and battery, and when the mesh reaches the site. ARM plays it back on the real map. Nothing is sent
+  to any drone; a banner says so. Real flights later use the existing confirmed "Fly to plan" and "Send scout".
+- **How it plans:** relay stations evenly on the line HQ → SOS; the scout launches first (eyes on the site
+  soonest), then the relays, farthest station first, a set gap apart; every drone on its own height layer
+  (5 m apart, never above 120 m); relays hold station until the scout has landed. The mesh is checked second
+  by second from the drones' positions, and battery use against a reserve.
+- **Cost:** straight lines, still air, a fixed battery time per drone type, and one range for every hop; no
+  obstacles, no-fly zones or wind. It is a plan to check by eye, not a flight controller.
+
+### The camera stays on the SOS site for the whole mission (added 15 November 2026, rule changed twice the same day)
+- **Rule:** from ARM to touchdown, on the pad, climbing, in transit, overhead and flying home, the camera aims
+  at the SOS site, like ArduPilot's "region of interest" mode:
+  - tilt = −atan(height ÷ ground distance to the site): 0° on the pad 2 km away, −1.4° at 50 m up, −5.7° at
+    500 m, −45° at 50 m, −90° straight over it;
+  - zoom keeps about 150 m around the site in the picture, 1–10× (the ZR10's optical range): 10× from 2 km,
+    3.5× at 500 m, 1× from 100 m.
+  The scout keeps its nose on the site, so yaw stays 0 and on the way home it flies backwards. The 150 m and the
+  field of view (55° at 1×) are settings. The same rules run in the server (`gimbal_pitch`, `camera_zoom`,
+  self-tested) and the page.
+- **Instead of:** first "at least 30° down" (at a steady cruise height it never moved), then "the ground 100 m
+  ahead" (it found the site only in the last 100 m). The team wants the site on screen from lift-off.
+- **Cost:** from far away the site is a few pixels even at 10×; the picture is useful from about 1 km.
+- **Tested on the real camera:** a −30° command through the GCS tilted the ZR10 to −25° in 1.5 s. On a desk,
+  powered camera-up, the ZR10 runs upside-down and stops at about −25°; hanging under the drone it reaches −90°.
+- **Real camera:** two switches send only tilt and zoom to the ZR10 through the GCS (`/api/nodes/S-01/cmd`,
+  `{"type": "gimbal"}` and `{"type": "zoom"}`), at most twice a second and only when the tilt changes by 0.5° or
+  the zoom by 0.3×, so the slow tilt during the climb and transit is followed too. "Move the real camera with the
+  run" (virtual run) is on by default: with it off, nobody saw the camera move. "Keep the camera on the SOS while
+  the real scout flies" (Live tab, real height and position) stays off by default. Never a flight command. Yaw
+  stays 0 (the drone's nose), which assumes the drone faces the site.
+
+### Camera controls in the control room, the same as the GCS's Vision page (added 15 November 2026)
+- **What:** under the live video: a hold-to-move pad (▲ ◀ CTR ▶ ▼, `gimbal_rate` every 250 ms, zero on release),
+  zoom − / + and a 1–30× slider, pan and tilt sliders (absolute angles), auto focus and hold-to-focus near / far,
+  click on the video to aim, photo and record (on the camera's SD card). The line above the controls shows the
+  angle, zoom and recording state the Jetson reports through the GCS (`/api/nodes`), once a second. The one camera
+  card moves into the Mission planner tab when that tab is open, so the camera can be watched during a run.
+- **Instead of:** sending the operator to the GCS for the camera, or calling the Jetson directly. The commands go
+  through the GCS's `/api/nodes/S-01/cmd`, exactly as its Vision page sends them, so there is one path to the camera.
+- **Safety:** `/api/camera` accepts only the GCS's camera command types, each number within the camera's range,
+  and drops any other field (`camera_cmd`, self-tested); a flight command is refused. When the GCS cannot reach
+  the Jetson it says so on the page instead of failing silently. Moving the camera by hand pauses the automatic
+  camera for 10 s.
+- **Left out:** "track on / off": the Jetson's `zr10_gimbal.py` ignores it (it needs the vision app).
 
 ### The scout flies only when an operator confirms
 - **Instead of:** sending S-01 automatically on every SOS.

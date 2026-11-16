@@ -22,7 +22,7 @@ hackathon.
 | [tools/monitor.py](tools/monitor.py) | Laptop dashboard: which nodes are alive, their signal, every heartbeat, a map. `python tools/monitor.py --mock` runs without hardware. |
 | [tools/priority_test.py](tools/priority_test.py) | Measures how much faster SOS messages get through than normal ones under load. |
 | [tools/adaptive_test.py](tools/adaptive_test.py) | Phase 2: measures adaptive SF against the fixed setting. |
-| [tools/control_room.py](tools/control_room.py) | **Control room**: map of every node, every message with where the sender is, the gimbal drone's live camera from the GCS, and "Send scout here". `--mock` runs without hardware. |
+| [tools/control_room.py](tools/control_room.py) | **Control room**: map of every node, every message with where the sender is, the gimbal drone's live camera from the GCS with its controls (pan, tilt, zoom, focus, aim, photo, record), and "Send scout here". `--mock` runs without hardware. |
 | [tools/control_room.bat](tools/control_room.bat) | Double-click start for the control room: finds node C on USB, camera straight from the Jetson. |
 | [tools/hq_forward.py](tools/hq_forward.py) | Runs on the gimbal drone's companion computer: passes node C's USB output to the control room over the drones' Wi-Fi. |
 | [tools/relay_compare.py](tools/relay_compare.py) | Drones: compares signal and delivery with node B on the ground and on the relay drone. |
@@ -54,6 +54,8 @@ hackathon.
 - Control room: live map of all nodes (moving with their drones), every SOS with a search circle around the
   sender, the gimbal camera's live video, and a confirmed "Send scout here" that flies the drone there
   through the team's GCS. The sender's internet is never used.
+- Mission planner: for each SOS, a full virtual drone mission (relays needed, routes, heights, timings,
+  battery) played on the real map with ARM, before any drone flies.
 - Drone plan: the control room works out where each relay drone must hover to keep the mesh, checks that
   the gimbal drone stays in reach of the mesh all the way to the sender, and flies each one on a click.
 - Positions: typed in once over USB for ground nodes; nodes on drones use the drone's own GPS.
@@ -63,3 +65,7 @@ hackathon.
 
 The software is written and compiles; it has **not yet run on the real boards**. See the status table in
 [plan.md](plan.md) for what has been tested and what is still to do, and the known limits listed there.
+
+Range: tested at 1.5 km between each node.
+
+https://www.linkedin.com/in/arpan-ailawadi/

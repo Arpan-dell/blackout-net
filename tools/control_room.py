@@ -146,6 +146,167 @@ def make_plan(hq, ground, relay_drones, drones, target, cfg):
     return plan
 
 
+# ---------------------------------------------------------------------------------------------- mission planner
+# A VIRTUAL mission for one SOS: relay drones hold a mesh from the HQ to the SOS site, the scout flies there to look.
+# Nothing here sends a command to any drone; the page plays the plan back on the map.
+MISSION = {  # name: (default, lowest, highest)
+    "scout_speed": (8, 1, 25), "relay_speed": (10, 1, 25), "scout_alt": (50, 10, 120), "relay_alt": (40, 10, 120),
+    "layer": (5, 3, 20), "climb": (3, 0.5, 8), "descend": (2, 0.5, 6), "loiter_min": (5, 0, 30),
+    "stagger_s": (10, 0, 60), "scout_endurance_min": (25, 3, 90), "relay_endurance_min": (20, 3, 90),
+    "reserve_pct": (20, 10, 50), "cam_keep_m": (150, 20, 2000), "cam_fov": (55, 10, 120)}
+ARM_S = 5          # from the arm command to lift-off
+MAX_ALT_M = 120    # highest a small drone may fly in India's green zones (Digital Sky)
+PHASES = ("waiting to launch", "climbing", "flying out", "on station", "flying home", "landing")
+
+
+def gimbal_pitch(alt_m, ground_m):
+    """Camera tilt in degrees (negative = down) that keeps the SOS site in the middle of the picture, from the
+    drone's height and its ground distance to the site: 0 on the pad, -90 straight over the site."""
+    return -min(90.0, math.degrees(math.atan2(max(alt_m, 0.0), max(ground_m, 0.0))))
+
+
+def camera_zoom(alt_m, ground_m, fov_deg=55, keep_m=150, max_zoom=10):
+    """Zoom that keeps about keep_m of ground around the site in the picture (the ZR10 has 10x optical zoom)."""
+    width_1x = 2 * math.hypot(alt_m, ground_m) * math.tan(math.radians(fov_deg) / 2)
+    return min(max_zoom, max(1.0, width_1x / keep_m))
+
+
+# The camera commands of the GCS's Vision page, as the Jetson's zr10_gimbal.py takes them, with each number's range.
+# Camera only: nothing here can move a drone.
+CAMERA_CMDS = {"gimbal": {"yaw": (-135, 135), "pitch": (-90, 25)}, "gimbal_rate": {"yaw": (-100, 100), "pitch": (-100, 100)},
+               "zoom": {"level": (1, 30)}, "aim": {"x": (0, 1), "y": (0, 1), "aspect": (0.2, 5)},
+               "focus_rate": {"dir": (-1, 1)}, "center": {}, "snapshot": {}, "focus": {}, "record": {}}
+
+
+def camera_cmd(body):
+    """The camera command in a request from the page, cleaned (known fields only), or None if it is not one."""
+    if not isinstance(body, dict) or body.get("type") not in CAMERA_CMDS:
+        return None
+    cmd = {"type": body["type"]}
+    for k, (lo, hi) in CAMERA_CMDS[cmd["type"]].items():
+        v = body.get(k)
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not lo <= v <= hi:  # NaN fails too
+            return None
+        cmd[k] = round(float(v), 4)
+    if cmd["type"] == "focus":
+        if body.get("mode") not in ("auto", "manual"):
+            return None
+        cmd["mode"] = body["mode"]
+    if cmd["type"] == "record":
+        if not isinstance(body.get("on"), bool):
+            return None
+        cmd["on"] = body["on"]
+    return cmd
+
+
+def mission_params(given):
+    """The planner's settings: given values clamped to sane limits, defaults for the rest."""
+    out = {}
+    for name, (default, lo, hi) in MISSION.items():
+        try:
+            v = float((given or {}).get(name, default))
+        except (TypeError, ValueError):
+            v = default
+        out[name] = min(hi, max(lo, v)) if math.isfinite(v) else float(default)
+    return out
+
+
+def position_at(wps, t):
+    """Where a drone is at time t (s from ARM), moving in straight lines between its timed waypoints."""
+    if t <= wps[0]["t"]:
+        return wps[0]
+    for a, b in zip(wps, wps[1:]):
+        if t <= b["t"]:
+            f = (t - a["t"]) / (b["t"] - a["t"]) if b["t"] > a["t"] else 1
+            return {k: a[k] + (b[k] - a[k]) * f for k in ("lat", "lon", "alt")}
+    return wps[-1]
+
+
+def linked(points, range_m, start=0):
+    """Indexes reachable from points[start] by hops of at most range_m."""
+    seen, todo = {start}, [start]
+    while todo:
+        i = todo.pop()
+        for j, q in enumerate(points):
+            if j not in seen and dist(points[i], q) <= range_m:
+                seen.add(j)
+                todo.append(j)
+    return seen
+
+
+def plan_mission(hq, target, cfg, prm):
+    """Every drone's flight for one SOS, with times, heights, battery use and when the mesh reaches the site."""
+    range_m, site = cfg["range_m"], {"lat": target["lat"], "lon": target["lon"]}
+    total = dist(hq, site)
+    points, _ = plan_relays(hq, [dict(site, name="SOS")], range_m)
+    for i, p in enumerate(points):
+        p["name"] = f"R{i + 1}"  # R1 nearest the HQ
+    order = sorted(range(len(points)), key=lambda i: -dist(hq, points[i]))  # farthest first: mesh complete soonest
+    pool, warnings = list(cfg["relays"]), []
+    relay_alts = [prm["relay_alt"] + prm["layer"] * j for j in range(len(points))]
+    scout_alt = max(prm["scout_alt"], (max(relay_alts) + prm["layer"]) if relay_alts else 0)
+
+    def flight(name, role, node, virtual, launch, alt, speed, there, hold_until, endurance_min, stay):
+        d = dist(hq, there)
+        up = launch + ARM_S + alt / prm["climb"]
+        arrive = up + d / speed
+        leave = max(arrive, hold_until)
+        home = leave + d / speed
+        land = home + alt / prm["descend"]
+        wp = lambda label, p, h, t: {"label": label, "lat": p["lat"], "lon": p["lon"], "alt": round(h, 1), "t": round(t, 1)}
+        wps = [wp("on the pad", hq, 0, 0), wp("lift-off", hq, 0, launch), wp(f"at {alt:.0f} m", hq, alt, up),
+               wp(stay, there, alt, arrive), wp("leaves", there, alt, leave), wp("back over home", hq, alt, home),
+               wp("landed", hq, 0, land)]
+        battery = 100 * (land - launch) / (endurance_min * 60)
+        if battery > 100 - prm["reserve_pct"]:
+            warnings.append(f"{name} would use {battery:.0f} % of its battery, more than the {100 - prm['reserve_pct']:.0f} % "
+                            f"allowed with a {prm['reserve_pct']:.0f} % reserve: shorten the time over the site, or launch closer.")
+        return {"id": name, "role": role, "node": node, "virtual": virtual, "alt": round(alt, 1), "speed": speed,
+                "distance_m": round(d), "launch_s": round(launch, 1), "arrive_s": round(arrive, 1), "land_s": round(land, 1),
+                "flight_s": round(land - launch, 1), "battery_pct": round(battery), "waypoints": wps, "phases": list(PHASES),
+                "hover": {"lat": there["lat"], "lon": there["lon"]}}
+
+    scout_node = None  # set below once the relays are known
+    up = ARM_S + scout_alt / prm["climb"]
+    scout_over = up + total / prm["scout_speed"]
+    scout_land = scout_over + prm["loiter_min"] * 60 + total / prm["scout_speed"] + scout_alt / prm["descend"]
+    relays = []
+    for j, i in enumerate(order):
+        did, node = pool[j] if j < len(pool) else (f"{points[i]['name']} (virtual)", None)
+        relays.append(flight(did, "relay", node, j >= len(pool), (j + 1) * prm["stagger_s"], relay_alts[j],
+                             prm["relay_speed"], points[i], scout_land, prm["relay_endurance_min"], f"on station {points[i]['name']}"))
+        relays[-1]["station"] = points[i]["name"]
+    if cfg.get("hq_on_scout"):
+        scout_node = "C (HQ)"
+    scout = flight(cfg["scout"], "scout", scout_node, False, 0, scout_alt, prm["scout_speed"], site,
+                   scout_over + prm["loiter_min"] * 60, prm["scout_endurance_min"], "over the SOS site")
+    scout["phases"] = [*PHASES[:3], "watching the SOS site", *PHASES[4:]]
+    drones = [scout] + sorted(relays, key=lambda d: d["station"])
+    if len(points) > len(pool):
+        have = ", ".join(f"{d} with node {n}" for d, n in pool) or "none"
+        warnings.append(f"This SOS needs {len(points)} relay drone(s), each carrying a node; configured: {have}. "
+                        f"The missing ones are planned as virtual drones.")
+    if scout_alt > MAX_ALT_M:
+        warnings.append(f"The scout would fly at {scout_alt:.0f} m, above the {MAX_ALT_M} m limit: lower the heights or the layer gap.")
+
+    end = max(d["land_s"] for d in drones)
+    mesh_up = scout_gap = None
+    for t in range(0, int(end) + 2):
+        members = [hq, site] + [position_at(d["waypoints"], t) for d in relays]
+        if mesh_up is None and 1 in linked(members, range_m):
+            mesh_up = t
+        if scout_gap is None and scout["launch_s"] <= t <= scout["land_s"]:
+            if len(members) not in linked(members + [position_at(scout["waypoints"], t)], range_m):
+                scout_gap = t
+    if mesh_up is None:
+        warnings.append("The mesh never reaches the SOS site with this range: measure the range and start with --range.")
+    return {"hq": {"lat": hq["lat"], "lon": hq["lon"], "source": hq.get("source")}, "site": site, "key": target.get("key"),
+            "sos_id": target.get("id"), "radius_m": target.get("radius_m"), "distance_m": round(total), "range_m": range_m,
+            "hop_m": round(total / (len(points) + 1)), "relays_needed": len(points), "relays_available": len(pool),
+            "scout_over_s": round(scout_over, 1), "mesh_up_s": mesh_up, "scout_gap_s": scout_gap, "end_s": round(end, 1),
+            "drones": drones, "warnings": warnings, "params": prm}
+
+
 class ControlRoom:
     """Node table (the monitor's), the message list kept on disk, and the scout drone's state.
     The reader thread, the GCS thread and the web page all go through mon.lock."""
@@ -155,6 +316,7 @@ class ControlRoom:
         self.msgs, self.lines, self.placed = {}, collections.deque(maxlen=200), {}
         self.last_status, self.scout, self.scout_error = 0.0, None, ""
         self.drones = {}  # GCS id -> telemetry, for the scout and the relay drones
+        self.camctl = None  # the scout's camera as its Jetson reports it through the GCS
         self.cfg = cfg or {"range_m": 1500, "relay_alt": 40, "speed": 8, "scout": "S-01", "relays": [], "hq_on_scout": False}
         mon.error = f"Waiting for node C on {source}"
         if os.path.exists(log_path):  # node C forgets on every restart; the control room does not
@@ -226,6 +388,7 @@ class ControlRoom:
             st["lines"] = list(self.lines)[-60:]
             st["scout"], st["scout_error"] = self.scout, self.scout_error
             st["drones"] = dict(self.drones)
+            st["camctl"] = self.camctl
         self.drone_positions(st)
         st["plan"] = self.plan(st)
         return st
@@ -293,9 +456,21 @@ class Gcs:
                     found[did] = self.drone(did)
                 except Exception as e:  # GCS not started, or that drone not in its config
                     err = err or f"GCS at {self.base}, {did}: {e}"
+            try:  # the scout's camera as its Jetson reports it: angles, zoom, recording
+                n = self.call("/api/nodes").get(self.scout) or {}
+                v = n.get("vision") or {}
+                g = v.get("gimbal") or {}
+                cam = {"online": bool(n.get("online")), "yaw": g.get("yaw"), "pitch": g.get("pitch"), "zoom": v.get("zoom"),
+                       "recording": bool(v.get("recording")), "focus": v.get("focus")}
+            except Exception as e:
+                cam = {"online": False, "error": f"GCS at {self.base}: {e}"}
             with room.mon.lock:
-                room.drones, room.scout, room.scout_error = found, found.get(self.scout), err
+                room.drones, room.scout, room.scout_error, room.camctl = found, found.get(self.scout), err, cam
             time.sleep(1)
+
+    def camera(self, cmd):
+        """Send one camera command (from camera_cmd) to the scout's Jetson. Never a flight command."""
+        return self.call(f"/api/nodes/{self.scout}/cmd", cmd)
 
     def goto(self, lat, lon, did=None, alt=None):
         return self.call(f"/api/drones/{did or self.scout}/goto",
@@ -467,9 +642,34 @@ def ui_server(room, gcs, port, camera=None):
                 room.mon.event("handled", node, f"Node {node} placed on the map at {lat:.6f}, {lon:.6f}")
             return self.send(200, {"ok": True, "lat": lat, "lon": lon})
 
+        def camera(self, body):  # camera commands only: never a flight command
+            if not gcs:
+                return self.send(409, {"error": "Start the control room with --gcs to move the real camera"})
+            cmd = camera_cmd(body)
+            if not cmd:
+                return self.send(400, {"error": "not a camera command, or a number out of the camera's range"})
+            try:
+                reply = gcs.camera(cmd)
+            except Exception as e:
+                return self.send(502, {"error": f"GCS did not take the camera command: {e}"})
+            if not reply.get("ok"):  # the GCS answers ok: false when it has no address for the Jetson
+                return self.send(409, {"error": f"The GCS cannot reach {gcs.scout}'s camera. Is the Jetson on?"})
+            return self.send(200, reply)
+
+        def mission(self, key, body):  # a virtual plan only: nothing is sent to any drone
+            st = room.snapshot()
+            msg = next((m for m in st["messages"] if m["key"] == key), None)
+            if not msg or not has_pos(msg):
+                return self.send(409, {"error": "That SOS has no position yet: set its node's position first"})
+            if not has_pos(st["plan"]["hq"]):
+                return self.send(409, {"error": "No HQ position yet: set node C's position, or start the GCS"})
+            return self.send(200, plan_mission(st["plan"]["hq"], msg, room.cfg, mission_params(body.get("params"))))
+
         def do_POST(self):
             try:
                 body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length", 0)), 4096)))
+                if self.path == "/api/camera":
+                    return self.camera(body)
                 key = body["drone"] if self.path == "/api/relay" else body["key"]
             except (ValueError, KeyError, TypeError):
                 return self.send(400, {"error": "send {\"key\": ...} or, for /api/relay, {\"drone\": ...}"})
@@ -477,6 +677,8 @@ def ui_server(room, gcs, port, camera=None):
                 return self.fly_relay(key)
             if self.path == "/api/place":
                 return self.place(body)
+            if self.path == "/api/mission":
+                return self.mission(key, body)
             msg = next((m for m in room.snapshot()["messages"] if m["key"] == key), None)
             if not msg:
                 return self.send(404, {"error": "no such message"})
@@ -533,6 +735,7 @@ def mock(room, gcs_port):
     home, a_pos = (28.7105, 77.2135), (28.7245, 77.2295)  # A about 2.1 km from the control room: needs a relay
     fleet = {did: {"lat": home[0], "lon": home[1], "target": None} for did in ("S-01", "I-01")}
     sc, relay = fleet["S-01"], fleet["I-01"]  # node C rides on S-01, node B on I-01
+    cam = {"yaw": 0.0, "pitch": 0.0, "zoom": 1.0, "recording": False}  # S-01's ZR10: goes straight where it is told
     t0 = time.time()
 
     def step():  # called every 5 s: the scout covers 40 m (8 m/s), the lighter relay drone 60 m
@@ -552,6 +755,11 @@ def mock(room, gcs_port):
                                                 "home": {"lat": home[0], "lon": home[1], "alt_msl_m": 216.0},
                                                 "battery": {"remaining_pct": 81}}}).encode()
                 kind = "application/json"
+            elif self.path == "/api/nodes":
+                body = json.dumps({"S-01": {"online": True, "age_s": 0.1, "vision": {
+                    "gimbal": {"yaw": cam["yaw"], "pitch": cam["pitch"], "roll": 0.0}, "zoom": cam["zoom"],
+                    "recording": cam["recording"], "focus": "auto"}}}).encode()
+                kind = "application/json"
             elif self.path.startswith("/video/"):
                 body = (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360"><rect width="640" height="360" fill="#203040"/>'
                         b'<text x="320" y="170" fill="#fff" font-size="28" text-anchor="middle" font-family="sans-serif">MOCK CAMERA</text>'
@@ -568,7 +776,20 @@ def mock(room, gcs_port):
 
         def do_POST(self):
             b = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            fleet[self.path.split("/")[3]]["target"] = (b["lat"], b["lon"])
+            if self.path.startswith("/api/nodes/"):  # a camera command (camera rates are deg/s, sent every 0.25 s)
+                t = b["type"]
+                if t == "gimbal":
+                    cam.update(yaw=b["yaw"], pitch=b["pitch"])
+                elif t == "gimbal_rate":  # + yaw = right, which is - in SIYI angles on a hanging ZR10
+                    cam.update(yaw=max(-135, min(135, cam["yaw"] - b["yaw"] / 4)), pitch=max(-90, min(25, cam["pitch"] + b["pitch"] / 4)))
+                elif t == "zoom":
+                    cam["zoom"] = b["level"]
+                elif t == "center":
+                    cam.update(yaw=0.0, pitch=0.0)
+                elif t == "record":
+                    cam["recording"] = b["on"]
+            else:
+                fleet[self.path.split("/")[3]]["target"] = (b["lat"], b["lon"])
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -641,6 +862,51 @@ def selftest():
     assert p["relays"][0]["drone"] == "I-01" and p["relays"][0]["off_m"] == 1100 and not p["warnings"], p
     assert p["scout"]["distance_m"] == 2200 and p["scout"]["eta_s"] == 275 and p["scout"]["breaks_at_m"] is None
     assert make_plan(hq, [far], [], {}, None, cfg)["warnings"]  # a relay needed and no drone for it
+    # camera stays on the SOS site: on the horizon from the pad, steeper as the drone climbs and closes in, -90 over it
+    assert gimbal_pitch(0, 2000) == 0 and round(gimbal_pitch(50, 2000), 1) == -1.4 and round(gimbal_pitch(50, 500), 1) == -5.7
+    assert gimbal_pitch(50, 50) == -45 and gimbal_pitch(50, 0) == -90 and gimbal_pitch(50, -5) == -90
+    # zoom keeps about 150 m of the site in view: full 10x far away, 1x close by
+    assert camera_zoom(50, 2000) == 10 and camera_zoom(50, 100) == 1 and round(camera_zoom(50, 500), 1) == 3.5
+    # camera commands from the page: only the camera's own, in range, with unknown fields dropped
+    assert camera_cmd({"type": "gimbal", "yaw": 0, "pitch": -45, "lat": 1}) == {"type": "gimbal", "yaw": 0.0, "pitch": -45.0}
+    assert camera_cmd({"type": "zoom", "level": 4}) == {"type": "zoom", "level": 4.0} and camera_cmd({"type": "center"}) == {"type": "center"}
+    assert camera_cmd({"type": "record", "on": True}) == {"type": "record", "on": True}
+    assert camera_cmd({"type": "focus", "mode": "auto"}) == {"type": "focus", "mode": "auto"}
+    for bad in ({"type": "goto", "lat": 1, "lon": 2}, {"type": "gimbal", "yaw": 0, "pitch": -91}, {"type": "zoom", "level": float("nan")},
+                {"type": "zoom", "level": True}, {"type": "zoom"}, {"type": "record", "on": "yes"}, {"type": "focus", "mode": "x"}, [1], None):
+        assert camera_cmd(bad) is None, bad
+    # mission planner: an SOS 3 km north at 1500 m range needs 2 relays (hops of at most 1200 m)
+    sos = dict(north(3000), key="A-9", id=9, radius_m=30)
+    prm = mission_params({})
+    ms = plan_mission(hq, sos, cfg, prm)
+    relays = [d for d in ms["drones"] if d["role"] == "relay"]
+    assert (ms["relays_needed"], ms["relays_available"], ms["hop_m"], ms["distance_m"]) == (2, 1, 1000, 3000), ms
+    assert [d["virtual"] for d in relays] == [False, True] or [d["virtual"] for d in relays] == [True, False]
+    assert any("needs 2 relay" in w for w in ms["warnings"])  # only I-01 is configured
+    far_relay = max(relays, key=lambda d: d["distance_m"])
+    assert far_relay["launch_s"] == prm["stagger_s"] and far_relay["id"] == "I-01"  # the farthest leaves first
+    alts = sorted(d["alt"] for d in ms["drones"])
+    assert all(b - a >= prm["layer"] for a, b in zip(alts, alts[1:]))  # every drone on its own height layer
+    scout = ms["drones"][0]
+    assert scout["role"] == "scout" and abs(ms["scout_over_s"] - (ARM_S + scout["alt"] / 3 + 3000 / 8)) < 0.2
+    for d in ms["drones"]:  # times only go forward, and the battery figure matches the flight time
+        assert all(a["t"] <= b["t"] for a, b in zip(d["waypoints"], d["waypoints"][1:])), d["id"]
+        assert abs(d["battery_pct"] - 100 * d["flight_s"] / (60 * (25 if d["role"] == "scout" else 20))) < 1
+    on_station = max(d["arrive_s"] for d in relays)
+    # 3 km is beyond one hop, so not at once; and at the latest when the last relay is on station (often sooner:
+    # the hops are planned at 80 % of the range, so the links close before the drones finish flying)
+    assert ms["mesh_up_s"] is not None and 0 < ms["mesh_up_s"] <= on_station + 1, (ms["mesh_up_s"], on_station)
+    assert ms["scout_gap_s"] is None  # default speeds: the faster relays keep up, the scout never leaves the mesh
+    racing = plan_mission(hq, sos, cfg, mission_params({"scout_speed": 20, "relay_speed": 3}))
+    assert racing["scout_gap_s"] is not None  # a scout that outruns slow relays is reported, not hidden
+    mid = position_at(scout["waypoints"], (scout["waypoints"][2]["t"] + scout["waypoints"][3]["t"]) / 2)
+    assert abs(dist(hq, mid) - 1500) < 2  # halfway through the outbound leg it is halfway there
+    near = plan_mission(hq, dict(north(800), key="A-1", id=1), cfg, prm)
+    assert near["relays_needed"] == 0 and near["mesh_up_s"] == 0 and not near["warnings"]
+    assert mission_params({"scout_speed": "fast", "climb": 99, "loiter_min": float("nan")}) == \
+        dict(prm, climb=8.0)  # bad numbers: default or clamped
+    long = plan_mission(hq, sos, cfg, mission_params({"loiter_min": 30, "relay_endurance_min": 5}))
+    assert any("battery" in w for w in long["warnings"])
     path = os.path.join(tempfile.mkdtemp(), "messages.jsonl")
     room = ControlRoom(Monitor("usb"), path, "COM9")
     status = {"self": {"name": "C", "uptime_s": 5, "wifi_clients": 0, "lat": 28.71, "lon": 77.21},

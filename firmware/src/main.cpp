@@ -162,7 +162,10 @@ const char *posSource = "none";  // saved | build | none
 char logRing[40][112];
 uint8_t logAt = 0;
 
+bool quietLog = false;  // true while the start-up self-test runs
+
 void logf(const char *fmt, ...) {
+  if (quietLog) return;
   char *line = logRing[logAt];
   logAt = (logAt + 1) % 40;
   int n = snprintf(line, sizeof(logRing[0]), "[%8lu ms] ", (unsigned long)millis());
@@ -218,7 +221,16 @@ bool transmit(Packet &p) {
   return true;
 }
 
+// One copy of a message per queue: a newer try of a message (or a newer ACK for it) replaces the older one still
+// waiting here, keeping its place, so a retry never puts two copies on the air. CFG copies are meant to go twice.
 bool enqueue(const Packet &p, uint32_t delayMs) {
+  for (Pending &q : txq)
+    if (q.used && (p.type == T_DATA || p.type == T_ACK) && q.p.type == p.type && q.p.origin == p.origin && q.p.id == p.id) {
+      logf("REPLACED queued %s #%lu try %u by try %u", p.type == T_ACK ? "ACK" : "DATA", (unsigned long)p.id,
+           q.p.attempt, p.attempt);
+      q.p = p;
+      return true;
+    }
   for (Pending &q : txq)
     if (!q.used) {
       q = {true, millis() + delayMs, orderCounter++, p};
@@ -227,6 +239,15 @@ bool enqueue(const Packet &p, uint32_t delayMs) {
   stats.dropped++;
   logf("DROP: transmit queue full");
   return false;
+}
+
+// A message the HQ has confirmed: a copy of it still waiting in this node's queue is not needed any more.
+void dropDelivered(uint8_t origin, uint32_t id) {
+  for (Pending &q : txq)
+    if (q.used && q.p.type == T_DATA && q.p.origin == origin && q.p.id == id) {
+      q.used = false;
+      logf("CANCELLED queued DATA #%lu: the HQ has confirmed it", (unsigned long)id);
+    }
 }
 
 // Listen before talk: do not start while the radio is locking on to somebody else's packet.
@@ -464,6 +485,7 @@ void handlePacket(Packet &p, float rssi, float snr) {
          nodeChar(p.origin), p.dest == BROADCAST ? '*' : nodeChar(p.dest), nodeChar(p.lastHop), rssi, snr,
          dup ? " (duplicate)" : "");
   if (dup) return;
+  if (p.type == T_ACK) dropDelivered(p.dest, p.id);  // the ACK passing by: no leftover copy goes out after it
 
   if (p.type == T_HB) {
     noteHeartbeat(p, rssi, snr);
@@ -1003,6 +1025,22 @@ void selfTest() {
   inbox[20].arrivedMs = 50;
   ok = ok && freeTicket() == &inbox[20];  // an acknowledged message goes first
   memset(inbox, 0, sizeof(inbox));
+  quietLog = true;  // a retry replaces the older try still queued; the HQ's ACK cancels what is left
+  Packet d = a;
+  d.attempt = 1;
+  ok = ok && enqueue(d, 0);
+  d.attempt = 2;
+  ok = ok && enqueue(d, 0);
+  uint8_t copies = 0;
+  for (const Pending &q : txq) copies += q.used && q.p.id == d.id;
+  ok = ok && copies == 1 && txq[0].p.attempt == 2;
+  Packet k = d;  // two ACKs for the same message: one copy
+  k.type = T_ACK; k.origin = 3; k.dest = 1;
+  ok = ok && enqueue(k, 0) && enqueue(k, 0) && txq[1].used && !txq[2].used;
+  dropDelivered(d.origin, d.id);
+  ok = ok && !txq[0].used && txq[1].used;
+  memset(txq, 0, sizeof(txq));
+  quietLog = false;
   memset(seen, 0, sizeof(seen));
   seenAt = 0;
   Serial.println(ok ? "selftest ok" : "SELFTEST FAILED: do not trust this build");
