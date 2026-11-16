@@ -68,4 +68,4 @@ The software is written and compiles; it has **not yet run on the real boards**.
 
 Range: tested at 1.5 km between each node.
 
-Creator: [Arpan Ailawadi](https://www.linkedin.com/in/arpan-ailawadi/)
+Designed and developed by [Arpan Ailawadi](https://www.linkedin.com/in/arpan-ailawadi/)
